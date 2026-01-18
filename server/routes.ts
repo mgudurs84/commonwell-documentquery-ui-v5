@@ -11,6 +11,7 @@ function getHttpsAgent(): https.Agent | undefined {
   const certPath = process.env.CLIENT_CERT_PATH;
   const keyPath = process.env.CLIENT_KEY_PATH;
   const caPath = process.env.CA_CERT_PATH;
+  const skipTlsVerify = process.env.SKIP_TLS_VERIFY === "true";
 
   if (!certPath || !keyPath) {
     console.warn("Client certificate not configured. Set CLIENT_CERT_PATH and CLIENT_KEY_PATH environment variables for mTLS.");
@@ -21,13 +22,18 @@ function getHttpsAgent(): https.Agent | undefined {
     const agentOptions: https.AgentOptions = {
       cert: fs.readFileSync(path.resolve(certPath)),
       key: fs.readFileSync(path.resolve(keyPath)),
-      rejectUnauthorized: true,
+      rejectUnauthorized: !skipTlsVerify,
     };
 
     if (caPath) {
       agentOptions.ca = fs.readFileSync(path.resolve(caPath));
     }
 
+    if (skipTlsVerify) {
+      console.warn("WARNING: TLS certificate verification is disabled. Use only for testing!");
+    }
+
+    console.log("Client certificates loaded successfully");
     return new https.Agent(agentOptions);
   } catch (error: any) {
     console.error("Failed to load client certificates:", error.message);

@@ -9,6 +9,10 @@ set CLIENT_CERT_PATH=C:\path\to\your\client-cert.pem
 set CLIENT_KEY_PATH=C:\path\to\your\client-key.pem
 set CA_CERT_PATH=C:\path\to\your\ca-cert.pem
 
+REM Set to "true" to skip TLS verification (use only for testing!)
+REM This fixes "unable to get local issuer certificate" errors
+set SKIP_TLS_VERIFY=true
+
 REM ============================================================
 REM DO NOT MODIFY BELOW THIS LINE
 REM ============================================================

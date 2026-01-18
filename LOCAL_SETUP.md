@@ -62,8 +62,11 @@ npm run dev
 set CLIENT_CERT_PATH=C:\certs\client-cert.pem
 set CLIENT_KEY_PATH=C:\certs\client-key.pem
 set CA_CERT_PATH=C:\certs\ca-cert.pem
+set SKIP_TLS_VERIFY=true
 npm run dev
 ```
+
+**Note:** A pre-configured `run-local.bat` is included - just update the certificate paths and run it.
 
 ### 5. Start the Development Server
 ```bash
@@ -151,6 +154,11 @@ This error means CommonWell requires mTLS authentication. You must:
 
 ### "NODE_ENV is not recognized" Error (Windows)
 Make sure you've updated the scripts to use `cross-env` as shown above.
+
+### "Unable to get local issuer certificate" Error
+This means Node.js cannot verify CommonWell's SSL certificate chain. Solutions:
+1. **Quick fix for testing:** Set `SKIP_TLS_VERIFY=true` in your environment (already set in run-local.bat)
+2. **Proper fix:** Provide the CA certificate via `CA_CERT_PATH` environment variable
 
 ### "Failed to load client certificates" Error
 - Check that the file paths are correct and accessible
