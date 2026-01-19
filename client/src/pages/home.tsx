@@ -264,6 +264,8 @@ export default function Home() {
               isLoading={executeMutation.isPending}
               error={executeMutation.error}
               responseTime={responseTime}
+              environment={params.environment}
+              jwtToken={params.jwtToken}
             />
           </div>
         </div>

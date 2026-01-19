@@ -4,7 +4,7 @@ import https from "https";
 import fs from "fs";
 import path from "path";
 import { storage } from "./storage";
-import { BASE_URLS, type QueryParameters, insertQueryHistorySchema } from "@shared/schema";
+import { BASE_URLS, API_BASE_URLS, type QueryParameters, insertQueryHistorySchema } from "@shared/schema";
 import { z } from "zod";
 
 function getHttpsAgent(): https.Agent | undefined {
@@ -271,6 +271,137 @@ export async function registerRoutes(
       console.error("Execute query error:", error);
       return res.status(500).json({
         error: "Internal server error",
+        message: error.message,
+      });
+    }
+  });
+
+  const downloadSchema = z.object({
+    environment: z.enum(["integration", "production"]),
+    jwtToken: z.string().min(1),
+    documentUrl: z.string().url(),
+  });
+
+  app.post("/api/download-document", async (req, res) => {
+    try {
+      const parseResult = downloadSchema.safeParse(req.body);
+      
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          error: "Invalid download parameters",
+          details: parseResult.error.errors 
+        });
+      }
+
+      const { environment, jwtToken, documentUrl } = parseResult.data;
+      
+      let parsedUrl: URL;
+      try {
+        parsedUrl = new URL(documentUrl);
+      } catch {
+        return res.status(400).json({
+          error: "Invalid document URL",
+          message: "URL format is invalid",
+        });
+      }
+
+      const allowedHostnames: Record<string, string> = {
+        integration: "api.integration.commonwellalliance.lkopera.com",
+        production: "api.commonwellalliance.lkopera.com",
+      };
+      
+      const expectedHost = allowedHostnames[environment];
+      if (parsedUrl.protocol !== "https:" || parsedUrl.hostname !== expectedHost) {
+        return res.status(400).json({
+          error: "Invalid document URL",
+          message: `URL must be from ${expectedHost} using HTTPS`,
+        });
+      }
+
+      const httpsAgent = getHttpsAgent();
+      
+      const fetchBinary = (): Promise<{ status: number; statusText: string; data: string; headers: any }> => {
+        return new Promise((resolve, reject) => {
+          const urlObj = new URL(documentUrl);
+          const reqOptions: https.RequestOptions = {
+            hostname: urlObj.hostname,
+            port: urlObj.port || 443,
+            path: urlObj.pathname + urlObj.search,
+            method: "GET",
+            headers: {
+              "Authorization": `Bearer ${jwtToken}`,
+              "Accept": "application/fhir+json",
+            },
+            agent: httpsAgent,
+            timeout: 55000,
+          };
+
+          const req = https.request(reqOptions, (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+            response.on("end", () => {
+              const buffer = Buffer.concat(chunks);
+              resolve({
+                status: response.statusCode || 500,
+                statusText: response.statusMessage || "Error",
+                data: buffer.toString("utf-8"),
+                headers: response.headers,
+              });
+            });
+          });
+
+          req.on("error", reject);
+          req.on("timeout", () => {
+            req.destroy();
+            reject(new Error("Request timeout"));
+          });
+
+          req.end();
+        });
+      };
+
+      const response = await fetchBinary();
+
+      if (response.status !== 200) {
+        let errorDetails;
+        try {
+          errorDetails = JSON.parse(response.data);
+        } catch {
+          errorDetails = response.data;
+        }
+        return res.status(response.status).json({
+          error: `CommonWell API Error: ${response.status} ${response.statusText}`,
+          details: errorDetails,
+        });
+      }
+
+      let binaryResource;
+      try {
+        binaryResource = JSON.parse(response.data);
+      } catch {
+        return res.status(502).json({
+          error: "Invalid response from CommonWell API",
+          message: "Failed to parse Binary resource",
+        });
+      }
+
+      if (binaryResource.resourceType !== "Binary") {
+        return res.status(502).json({
+          error: "Unexpected response type",
+          message: `Expected Binary resource, got ${binaryResource.resourceType}`,
+        });
+      }
+
+      return res.json({
+        success: true,
+        contentType: binaryResource.contentType || "application/octet-stream",
+        data: binaryResource.data,
+        id: binaryResource.id,
+      });
+    } catch (error: any) {
+      console.error("Download document error:", error);
+      return res.status(500).json({
+        error: "Failed to download document",
         message: error.message,
       });
     }

@@ -3,14 +3,19 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Database, Download, ChevronDown, ChevronRight, FileText, Clock, Loader2, AlertCircle } from "lucide-react";
+import { DocumentsList } from "./documents-list";
+import { Database, Download, ChevronDown, ChevronRight, FileText, Clock, Loader2, AlertCircle, Code, List } from "lucide-react";
+import type { Environment, FhirBundle } from "@shared/schema";
 
 interface ResultsDisplayProps {
   data: any | null;
   isLoading: boolean;
   error: Error | null;
   responseTime?: number;
+  environment?: Environment;
+  jwtToken?: string;
 }
 
 function JsonViewer({ data, level = 0 }: { data: any; level?: number }) {
@@ -121,12 +126,14 @@ function JsonViewer({ data, level = 0 }: { data: any; level?: number }) {
   return <span>{String(data)}</span>;
 }
 
-export function ResultsDisplay({ data, isLoading, error, responseTime }: ResultsDisplayProps) {
+export function ResultsDisplay({ data, isLoading, error, responseTime, environment, jwtToken }: ResultsDisplayProps) {
+  const [activeTab, setActiveTab] = useState("documents");
+
   const handleExport = () => {
     if (!data) return;
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
+    const a = window.document.createElement("a");
     a.href = url;
     a.download = `commonwell-response-${new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-")}.json`;
     a.click();
@@ -134,6 +141,7 @@ export function ResultsDisplay({ data, isLoading, error, responseTime }: Results
   };
 
   const documentCount = data?.total ?? data?.entry?.length ?? 0;
+  const isFhirBundle = data?.resourceType === "Bundle" && Array.isArray(data?.entry);
 
   return (
     <Card className="border-card-border h-full flex flex-col">
@@ -186,11 +194,42 @@ export function ResultsDisplay({ data, isLoading, error, responseTime }: Results
             <p className="text-xs text-muted-foreground text-center max-w-md">{error.message}</p>
           </div>
         ) : data ? (
-          <ScrollArea className="h-[calc(100vh-280px)]">
-            <div className="font-mono text-xs leading-relaxed p-2 bg-muted/50 rounded-md" data-testid="json-results">
-              <JsonViewer data={data} />
-            </div>
-          </ScrollArea>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="h-full flex flex-col">
+            <TabsList className="grid w-full grid-cols-2 mb-3">
+              <TabsTrigger value="documents" className="gap-1" data-testid="tab-documents">
+                <List className="h-3 w-3" />
+                Documents
+              </TabsTrigger>
+              <TabsTrigger value="json" className="gap-1" data-testid="tab-json">
+                <Code className="h-3 w-3" />
+                Raw JSON
+              </TabsTrigger>
+            </TabsList>
+            
+            <TabsContent value="documents" className="flex-1 min-h-0 mt-0">
+              {isFhirBundle && environment && jwtToken ? (
+                <DocumentsList
+                  data={data as FhirBundle}
+                  environment={environment}
+                  jwtToken={jwtToken}
+                />
+              ) : (
+                <div className="flex flex-col items-center justify-center h-64 text-muted-foreground">
+                  <FileText className="h-8 w-8 mb-4" />
+                  <p className="text-sm">Document list view not available</p>
+                  <p className="text-xs mt-1">Switch to Raw JSON tab to view data</p>
+                </div>
+              )}
+            </TabsContent>
+            
+            <TabsContent value="json" className="flex-1 min-h-0 mt-0">
+              <ScrollArea className="h-[calc(100vh-330px)]">
+                <div className="font-mono text-xs leading-relaxed p-2 bg-muted/50 rounded-md" data-testid="json-results">
+                  <JsonViewer data={data} />
+                </div>
+              </ScrollArea>
+            </TabsContent>
+          </Tabs>
         ) : (
           <div className="flex flex-col items-center justify-center h-full py-12 text-muted-foreground">
             <div className="p-4 rounded-full bg-muted mb-4">

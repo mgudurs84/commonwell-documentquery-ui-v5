@@ -98,3 +98,109 @@ export const BASE_URLS = {
   integration: "https://api.integration.commonwellalliance.lkopera.com/v2/R4/DocumentReference",
   production: "https://api.commonwellalliance.lkopera.com/v2/R4/DocumentReference",
 };
+
+export const BINARY_BASE_URLS = {
+  integration: "https://api.integration.commonwellalliance.lkopera.com/v2/R4/Binary",
+  production: "https://api.commonwellalliance.lkopera.com/v2/R4/Binary",
+};
+
+export const API_BASE_URLS = {
+  integration: "https://api.integration.commonwellalliance.lkopera.com",
+  production: "https://api.commonwellalliance.lkopera.com",
+};
+
+export interface BinaryResource {
+  resourceType: "Binary";
+  id: string;
+  contentType: string;
+  data: string;
+}
+
+export interface DownloadRequest {
+  environment: Environment;
+  jwtToken: string;
+  documentUrl: string;
+}
+
+export interface DownloadResponse {
+  success: boolean;
+  contentType: string;
+  data: string;
+  filename?: string;
+  error?: string;
+}
+
+export interface DocumentContent {
+  attachment: {
+    contentType?: string;
+    url?: string;
+    title?: string;
+    size?: number;
+  };
+  format?: {
+    system?: string;
+    code?: string;
+    display?: string;
+  };
+}
+
+export interface DocumentReferenceResource {
+  resourceType: "DocumentReference";
+  id?: string;
+  masterIdentifier?: {
+    system?: string;
+    value?: string;
+  };
+  status?: string;
+  type?: {
+    coding?: Array<{
+      system?: string;
+      code?: string;
+      display?: string;
+    }>;
+    text?: string;
+  };
+  category?: Array<{
+    coding?: Array<{
+      system?: string;
+      code?: string;
+      display?: string;
+    }>;
+  }>;
+  subject?: {
+    reference?: string;
+  };
+  date?: string;
+  author?: Array<{
+    reference?: string;
+    display?: string;
+  }>;
+  custodian?: {
+    reference?: string;
+    display?: string;
+  };
+  content?: DocumentContent[];
+  context?: {
+    period?: {
+      start?: string;
+      end?: string;
+    };
+    sourcePatientInfo?: {
+      identifier?: {
+        value?: string;
+      };
+    };
+  };
+}
+
+export interface FhirBundleEntry {
+  fullUrl?: string;
+  resource?: DocumentReferenceResource;
+}
+
+export interface FhirBundle {
+  resourceType: "Bundle";
+  type: string;
+  total?: number;
+  entry?: FhirBundleEntry[];
+}

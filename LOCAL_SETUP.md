@@ -115,8 +115,32 @@ Results are displayed in an expandable JSON viewer with syntax highlighting.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/execute-query` | POST | Execute a CommonWell DocumentReference query |
+| `/api/download-document` | POST | Download a document using Binary Retrieve API |
 | `/api/query-history` | GET | Get recent query history |
 | `/api/query-history` | DELETE | Clear query history |
+
+### Document Download API
+
+The `/api/download-document` endpoint fetches document content from CommonWell's Binary API.
+
+**Request Body:**
+```json
+{
+  "environment": "integration",
+  "jwtToken": "your-jwt-token",
+  "documentUrl": "https://api.integration.commonwellalliance.lkopera.com/v2/R4/Binary/..."
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "contentType": "application/xml",
+  "data": "base64-encoded-content",
+  "id": "document-id"
+}
+```
 
 ## CommonWell Base URLs
 
