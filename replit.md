@@ -62,9 +62,10 @@ Preferred communication style: Simple, everyday language.
 - **connect-pg-simple**: Session storage for Express sessions
 
 ### Third-Party APIs
-- **CommonWell Health Alliance FHIR R4 API**: The application proxies queries to CommonWell's DocumentReference endpoints
-  - Integration: `https://rest.integration.commonwellalliance.org/v1/fhir/DocumentReference`
-  - Production: `https://rest.commonwellalliance.org/v1/fhir/DocumentReference`
+- **CommonWell Health Alliance FHIR R4 API**: The application proxies queries to CommonWell's DocumentReference and Binary endpoints
+  - Integration: `https://api.integration.commonwellalliance.lkopera.com/v2/R4/`
+  - Production: `https://api.commonwellalliance.lkopera.com/v2/R4/`
+  - Binary Retrieve API for document download with base64 content response
 
 ### Authentication
 - JWT tokens are passed through to CommonWell API (the application validates token structure client-side but authentication is handled by CommonWell)
