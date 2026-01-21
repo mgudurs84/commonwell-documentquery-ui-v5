@@ -1,0 +1,6 @@
+# Place your mTLS certificates in this folder:
+# - client.crt (Client certificate in PEM format)
+# - client.key (Client private key in PEM format)
+# - ca.crt (CA certificate in PEM format, optional)
+#
+# These files should NOT be committed to version control.
