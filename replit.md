@@ -68,7 +68,15 @@ Preferred communication style: Simple, everyday language.
   - Binary Retrieve API for document download with base64 content response
 
 ### Authentication
-- JWT tokens are passed through to CommonWell API (the application validates token structure client-side but authentication is handled by CommonWell)
+- **CLEAR ID Token**: The application accepts CLEAR OIDC ID Tokens from the Accounts Team /token API
+- **JWT Generation**: Automatically generates CommonWell JWTs with RS384 signing and x5t (SHA-1 thumbprint) header
+- **mTLS**: Client certificates used for both mutual TLS authentication and JWT signing
+- **Patient Create**: Creates patients in CommonWell using demographics extracted from CLEAR tokens with primary (CVS) and secondary (CLEAR IAL2) identifiers
+
+### Environment Variables
+- `CLIENT_CERT_PATH` / `CLIENT_KEY_PATH`: Paths to client certificate/key for mTLS and JWT signing
+- `CW_ORG_OID` / `CW_ORG_NAME`: Organization identifiers (default: CVS Health)
+- `CLEAR_OID`: CLEAR assigning authority OID for secondary identifier
 
 ### Key NPM Packages
 - **@tanstack/react-query**: Server state management and caching

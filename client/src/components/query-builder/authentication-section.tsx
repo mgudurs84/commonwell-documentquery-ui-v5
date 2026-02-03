@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -7,21 +8,26 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { KeyRound, Eye, EyeOff, ShieldCheck, AlertTriangle, Clock } from "lucide-react";
-import type { Environment, JwtPayload } from "@shared/schema";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { KeyRound, Eye, EyeOff, ShieldCheck, AlertTriangle, Clock, Wand2, ChevronDown, User, Loader2 } from "lucide-react";
+import { apiRequest } from "@/lib/queryClient";
+import type { Environment, ClearIdTokenClaims, GenerateJwtResponse } from "@shared/schema";
 
 interface AuthenticationSectionProps {
   environment: Environment;
   onEnvironmentChange: (env: Environment) => void;
   jwtToken: string;
   onJwtTokenChange: (token: string) => void;
+  clearIdToken?: string;
+  onClearIdTokenChange?: (token: string) => void;
+  onClearClaimsChange?: (claims: ClearIdTokenClaims | null) => void;
 }
 
-function decodeJwt(token: string): JwtPayload | null {
+function decodeClearIdToken(token: string): ClearIdTokenClaims | null {
   try {
     const parts = token.split(".");
     if (parts.length !== 3) return null;
-    const payload = JSON.parse(atob(parts[1]));
+    const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
     return payload;
   } catch {
     return null;
@@ -33,55 +39,66 @@ export function AuthenticationSection({
   onEnvironmentChange,
   jwtToken,
   onJwtTokenChange,
+  clearIdToken = "",
+  onClearIdTokenChange,
+  onClearClaimsChange,
 }: AuthenticationSectionProps) {
   const [showToken, setShowToken] = useState(false);
-  const [validationResult, setValidationResult] = useState<{
-    valid: boolean;
-    payload?: JwtPayload;
-    error?: string;
-    expiresIn?: number;
-  } | null>(null);
+  const [showGeneratedJwt, setShowGeneratedJwt] = useState(false);
+  const [decodedClaims, setDecodedClaims] = useState<ClearIdTokenClaims | null>(null);
+  const [jwtError, setJwtError] = useState<string | null>(null);
 
-  const handleValidateToken = () => {
-    if (!jwtToken.trim()) {
-      setValidationResult({ valid: false, error: "No token provided" });
-      return;
-    }
+  const generateJwtMutation = useMutation({
+    mutationFn: async (clearToken: string): Promise<GenerateJwtResponse> => {
+      const response = await apiRequest("POST", "/api/generate-jwt", { clearIdToken: clearToken });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.success && data.jwt) {
+        onJwtTokenChange(data.jwt);
+        if (data.claims) {
+          setDecodedClaims(data.claims);
+          onClearClaimsChange?.(data.claims);
+        }
+        setJwtError(null);
+      } else {
+        setJwtError(data.error || "Failed to generate JWT");
+      }
+    },
+    onError: (error: Error) => {
+      setJwtError(error.message);
+    },
+  });
 
-    const payload = decodeJwt(jwtToken.trim());
-    if (!payload) {
-      setValidationResult({ valid: false, error: "Invalid JWT format" });
-      return;
-    }
-
-    const now = Math.floor(Date.now() / 1000);
-    const expiresIn = payload.exp ? (payload.exp - now) : undefined;
-
-    if (payload.exp && payload.exp < now) {
-      setValidationResult({
-        valid: false,
-        payload,
-        error: "Token has expired",
-        expiresIn,
-      });
-    } else if (expiresIn !== undefined && expiresIn < 300) {
-      setValidationResult({
-        valid: true,
-        payload,
-        error: "Token expires in less than 5 minutes",
-        expiresIn,
-      });
+  useEffect(() => {
+    if (clearIdToken) {
+      const claims = decodeClearIdToken(clearIdToken);
+      if (claims) {
+        setDecodedClaims(claims);
+        onClearClaimsChange?.(claims);
+      }
     } else {
-      setValidationResult({ valid: true, payload, expiresIn });
+      setDecodedClaims(null);
+      onClearClaimsChange?.(null);
     }
+  }, [clearIdToken, onClearClaimsChange]);
+
+  const handleGenerateJwt = () => {
+    if (!clearIdToken.trim()) {
+      setJwtError("Please enter a CLEAR ID Token first");
+      return;
+    }
+    generateJwtMutation.mutate(clearIdToken.trim());
   };
 
-  const formatExpiryTime = (seconds: number) => {
+  const formatExpiryTime = (exp: number) => {
+    const now = Math.floor(Date.now() / 1000);
+    const seconds = exp - now;
     if (seconds < 0) return "Expired";
     const mins = Math.floor(seconds / 60);
     const hrs = Math.floor(mins / 60);
     if (hrs > 0) return `${hrs}h ${mins % 60}m`;
-    return `${mins}m ${seconds % 60}s`;
+    return `${mins}m`;
   };
 
   return (
@@ -119,24 +136,28 @@ export function AuthenticationSection({
         </div>
 
         <div className="space-y-2">
-          <Label htmlFor="jwt-token" className="text-sm font-medium">
-            JWT Token <span className="text-destructive">*</span>
+          <Label htmlFor="clear-id-token" className="text-sm font-medium">
+            CLEAR ID Token <span className="text-destructive">*</span>
           </Label>
+          <p className="text-xs text-muted-foreground">
+            Paste your CLEAR OIDC ID Token (from Accounts Team API). The CommonWell JWT will be generated automatically.
+          </p>
           <div className="relative">
             <Textarea
-              id="jwt-token"
-              data-testid="input-jwt-token"
-              placeholder="Paste your JWT token here..."
-              className={`min-h-[120px] font-mono text-xs resize-none ${!showToken ? "text-security-disc" : ""}`}
-              value={jwtToken}
+              id="clear-id-token"
+              data-testid="input-clear-id-token"
+              placeholder="Paste your CLEAR ID Token here (eyJhbGciOiJSUzI1NiIs...)..."
+              className={`min-h-[100px] font-mono text-xs resize-none ${!showToken ? "text-security-disc" : ""}`}
+              value={clearIdToken}
               onChange={(e) => {
-                onJwtTokenChange(e.target.value);
-                setValidationResult(null);
+                onClearIdTokenChange?.(e.target.value);
+                setJwtError(null);
+                onJwtTokenChange("");
               }}
               style={!showToken ? { WebkitTextSecurity: "disc" } as React.CSSProperties : {}}
             />
           </div>
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex items-center justify-between gap-4 flex-wrap">
             <div className="flex items-center gap-2">
               <Checkbox
                 id="show-token"
@@ -152,55 +173,108 @@ export function AuthenticationSection({
               </Label>
             </div>
             <Button
-              variant="outline"
+              variant="default"
               size="sm"
-              onClick={handleValidateToken}
-              data-testid="button-validate-token"
+              onClick={handleGenerateJwt}
+              disabled={generateJwtMutation.isPending || !clearIdToken.trim()}
+              data-testid="button-generate-jwt"
             >
-              <ShieldCheck className="h-4 w-4 mr-1" />
-              Validate Token
+              {generateJwtMutation.isPending ? (
+                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+              ) : (
+                <Wand2 className="h-4 w-4 mr-1" />
+              )}
+              Generate CommonWell JWT
             </Button>
           </div>
         </div>
 
-        {validationResult && (
-          <Alert variant={validationResult.valid && !validationResult.error ? "default" : "destructive"} className={validationResult.valid && !validationResult.error ? "border-primary/30 bg-primary/5" : ""}>
+        {jwtError && (
+          <Alert variant="destructive">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription>{jwtError}</AlertDescription>
+          </Alert>
+        )}
+
+        {jwtToken && (
+          <Alert className="border-primary/30 bg-primary/5">
+            <ShieldCheck className="h-4 w-4 text-primary" />
             <AlertDescription>
               <div className="space-y-2">
-                {validationResult.error && (
-                  <div className="flex items-center gap-2 font-medium">
-                    <AlertTriangle className="h-4 w-4" />
-                    {validationResult.error}
-                  </div>
-                )}
-                {validationResult.valid && !validationResult.error && (
-                  <div className="flex items-center gap-2 text-primary font-medium">
-                    <ShieldCheck className="h-4 w-4" />
-                    Token is valid
-                  </div>
-                )}
-                {validationResult.payload && (
-                  <div className="grid grid-cols-2 gap-2 mt-2 text-xs">
-                    {validationResult.expiresIn !== undefined && (
-                      <div className="flex items-center gap-1">
-                        <Clock className="h-3 w-3 text-muted-foreground" />
-                        <span className="text-muted-foreground">Expires:</span>
-                        <Badge variant="outline">
-                          {formatExpiryTime(validationResult.expiresIn)}
-                        </Badge>
-                      </div>
-                    )}
-                    {validationResult.payload.sub && (
-                      <div className="flex items-center gap-1">
-                        <span className="text-muted-foreground">Subject:</span>
-                        <span className="font-mono truncate max-w-[120px]">{validationResult.payload.sub}</span>
-                      </div>
-                    )}
-                  </div>
-                )}
+                <div className="flex items-center gap-2 text-primary font-medium">
+                  CommonWell JWT Generated Successfully
+                </div>
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <Clock className="h-3 w-3" />
+                  <span>Expires in 1 hour</span>
+                </div>
+                <Collapsible>
+                  <CollapsibleTrigger className="flex items-center gap-1 text-xs text-primary hover:underline">
+                    <ChevronDown className="h-3 w-3" />
+                    {showGeneratedJwt ? "Hide" : "View"} Generated JWT
+                  </CollapsibleTrigger>
+                  <CollapsibleContent>
+                    <div className="mt-2 p-2 bg-muted rounded text-xs font-mono break-all max-h-24 overflow-auto">
+                      {jwtToken}
+                    </div>
+                  </CollapsibleContent>
+                </Collapsible>
               </div>
             </AlertDescription>
           </Alert>
+        )}
+
+        {decodedClaims && (
+          <Collapsible defaultOpen>
+            <CollapsibleTrigger className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground">
+              <User className="h-4 w-4" />
+              <ChevronDown className="h-3 w-3" />
+              Patient Demographics (from CLEAR Token)
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="mt-2 p-3 bg-muted/50 rounded-md text-sm space-y-1">
+                <div className="grid grid-cols-2 gap-2">
+                  {decodedClaims.given_name && (
+                    <div><span className="text-muted-foreground">First Name:</span> <span className="font-medium">{decodedClaims.given_name}</span></div>
+                  )}
+                  {decodedClaims.family_name && (
+                    <div><span className="text-muted-foreground">Last Name:</span> <span className="font-medium">{decodedClaims.family_name}</span></div>
+                  )}
+                  {decodedClaims.middle_name && (
+                    <div><span className="text-muted-foreground">Middle:</span> <span className="font-medium">{decodedClaims.middle_name}</span></div>
+                  )}
+                  {decodedClaims.birthdate && (
+                    <div><span className="text-muted-foreground">DOB:</span> <span className="font-medium">{decodedClaims.birthdate}</span></div>
+                  )}
+                  {decodedClaims.gender && (
+                    <div><span className="text-muted-foreground">Gender:</span> <span className="font-medium">{decodedClaims.gender}</span></div>
+                  )}
+                  {decodedClaims.phone_number && (
+                    <div><span className="text-muted-foreground">Phone:</span> <span className="font-medium">{decodedClaims.phone_number}</span></div>
+                  )}
+                </div>
+                {decodedClaims.address && (
+                  <div className="pt-1 border-t border-border mt-2">
+                    <span className="text-muted-foreground">Address:</span>{" "}
+                    <span className="font-medium">
+                      {[
+                        decodedClaims.address.street_address,
+                        decodedClaims.address.locality,
+                        decodedClaims.address.region,
+                        decodedClaims.address.postal_code
+                      ].filter(Boolean).join(", ")}
+                    </span>
+                  </div>
+                )}
+                {decodedClaims.sub && (
+                  <div className="pt-1 border-t border-border mt-2">
+                    <span className="text-muted-foreground">CLEAR ID:</span>{" "}
+                    <span className="font-mono text-xs">{decodedClaims.sub}</span>
+                  </div>
+                )}
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         )}
       </CardContent>
     </Card>

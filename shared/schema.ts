@@ -44,6 +44,7 @@ export type DocumentStatus = "current" | "superseded" | "entered-in-error" | "al
 export interface QueryParameters {
   environment: Environment;
   jwtToken: string;
+  clearIdToken?: string;
   aaid: string;
   patientId: string;
   status: DocumentStatus;
@@ -61,6 +62,59 @@ export interface QueryParameters {
   authorEnabled: boolean;
   authorGiven?: string;
   authorFamily?: string;
+}
+
+export interface ClearIdTokenClaims {
+  iss?: string;
+  sub?: string;
+  aud?: string | string[];
+  exp?: number;
+  iat?: number;
+  jti?: string;
+  given_name?: string;
+  family_name?: string;
+  middle_name?: string;
+  birthdate?: string;
+  gender?: string;
+  phone_number?: string;
+  phone_number_verified?: boolean;
+  address?: {
+    street_address?: string;
+    locality?: string;
+    region?: string;
+    postal_code?: string;
+    country?: string;
+  };
+  historical_address?: Array<{
+    street_address?: string;
+    locality?: string;
+    region?: string;
+    postal_code?: string;
+    country?: string;
+  }>;
+}
+
+export interface GenerateJwtResponse {
+  success: boolean;
+  jwt?: string;
+  claims?: ClearIdTokenClaims;
+  expiresIn?: number;
+  error?: string;
+}
+
+export interface CreatePatientRequest {
+  environment: Environment;
+  clearIdToken: string;
+  cvsPatientId: string;
+  cvsAaid: string;
+}
+
+export interface CreatePatientResponse {
+  success: boolean;
+  patient?: any;
+  patientObject?: any;
+  error?: string;
+  details?: any;
 }
 
 export interface JwtPayload {

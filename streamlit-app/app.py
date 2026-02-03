@@ -6,10 +6,20 @@ import os
 import re
 import ssl
 import urllib3
-from datetime import datetime, timedelta
+import hashlib
+import uuid
+from datetime import datetime, timedelta, timezone
 from dateutil import parser as date_parser
 from typing import Optional, Dict, Any, List
 from urllib.parse import urlencode, quote
+
+try:
+    import jwt as pyjwt
+    from cryptography import x509
+    from cryptography.hazmat.primitives import serialization
+    JWT_AVAILABLE = True
+except ImportError:
+    JWT_AVAILABLE = False
 
 st.set_page_config(
     page_title="CommonWell Document Query",
@@ -97,6 +107,248 @@ API_BASE_URLS = {
     "integration": "https://api.integration.commonwellalliance.lkopera.com/v2/R4/",
     "production": "https://api.commonwellalliance.lkopera.com/v2/R4/"
 }
+
+CW_ORG_OID = os.environ.get("CW_ORG_OID", "2.16.840.1.113883.3.CVS")
+CW_ORG_NAME = os.environ.get("CW_ORG_NAME", "CVS Health")
+CLEAR_OID = os.environ.get("CLEAR_OID", "1.2.3.4.5.6.7.8.9")
+
+def decode_clear_id_token(token: str) -> Optional[Dict[str, Any]]:
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        payload_padding = "=" * (4 - len(parts[1]) % 4) if len(parts[1]) % 4 else ""
+        payload = json.loads(base64.urlsafe_b64decode(parts[1] + payload_padding))
+        return payload
+    except Exception:
+        return None
+
+def get_x5t_from_cert(cert_path: str) -> Optional[str]:
+    if not JWT_AVAILABLE:
+        return None
+    try:
+        with open(cert_path, "rb") as f:
+            cert = x509.load_pem_x509_certificate(f.read())
+        cert_der = cert.public_bytes(serialization.Encoding.DER)
+        thumbprint = hashlib.sha1(cert_der).digest()
+        return base64.urlsafe_b64encode(thumbprint).rstrip(b"=").decode("utf-8")
+    except Exception:
+        return None
+
+def generate_commonwell_jwt(clear_id_token: str) -> Dict[str, Any]:
+    if not JWT_AVAILABLE:
+        return {"error": "PyJWT and cryptography packages required. Install with: pip install PyJWT cryptography"}
+    
+    certs_dir = os.path.join(os.path.dirname(__file__), "certs")
+    cert_path = os.path.join(certs_dir, "certificate.pem")
+    key_path = os.path.join(certs_dir, "private_key.pem")
+    
+    if not os.path.exists(cert_path):
+        cert_path = os.environ.get("CW_CERTIFICATE_PATH")
+    if not os.path.exists(key_path):
+        key_path = os.environ.get("CW_PRIVATE_KEY_PATH")
+    
+    if not cert_path or not key_path:
+        return {"error": "Certificate paths not configured. Set CW_CERTIFICATE_PATH and CW_PRIVATE_KEY_PATH."}
+    
+    if not os.path.exists(cert_path) or not os.path.exists(key_path):
+        return {"error": f"Certificate files not found at {cert_path} or {key_path}"}
+    
+    try:
+        with open(key_path, "rb") as f:
+            private_key = serialization.load_pem_private_key(f.read(), password=None)
+        
+        claims = decode_clear_id_token(clear_id_token)
+        if not claims:
+            return {"error": "Failed to decode CLEAR ID token"}
+        
+        patient_name = f"{claims.get('given_name', '')} {claims.get('family_name', '')}".strip()
+        now = datetime.now(timezone.utc)
+        
+        x5t = get_x5t_from_cert(cert_path)
+        
+        headers = {
+            "typ": "JWT",
+            "alg": "RS384",
+        }
+        if x5t:
+            headers["x5t"] = x5t
+        
+        payload = {
+            "iss": f"urn:oid:{CW_ORG_OID}",
+            "sub": f"urn:oid:{CW_ORG_OID}",
+            "aud": "urn:commonwellalliance.org",
+            "iat": int(now.timestamp()),
+            "nbf": int(now.timestamp()),
+            "exp": int((now + timedelta(hours=1)).timestamp()),
+            "jti": str(uuid.uuid4()),
+            "purposeofuse": "REQUEST",
+            "urn:oasis:names:tc:xacml:2.0:subject:role": "116154003",
+            "urn:oasis:names:tc:xspa:1.0:subject:subject-id": patient_name,
+            "urn:oasis:names:tc:xspa:1.0:subject:organization": CW_ORG_NAME,
+            "urn:oasis:names:tc:xspa:1.0:subject:organization-id": f"urn:oid:{CW_ORG_OID}",
+            "extensions": {
+                "tefca_ias": {
+                    "id_token": clear_id_token
+                }
+            }
+        }
+        
+        signed_jwt = pyjwt.encode(payload, private_key, algorithm="RS384", headers=headers)
+        
+        return {"success": True, "jwt": signed_jwt, "claims": claims}
+    except Exception as e:
+        return {"error": f"Failed to generate JWT: {str(e)}"}
+
+def build_patient_object(clear_claims: Dict[str, Any], cvs_patient_id: str, cvs_aaid: str) -> Dict[str, Any]:
+    patient = {
+        "identifier": [
+            {
+                "value": cvs_patient_id,
+                "system": cvs_aaid,
+                "use": "official",
+                "assigner": CW_ORG_NAME
+            },
+            {
+                "value": clear_claims.get("sub", ""),
+                "system": CLEAR_OID,
+                "use": "secondary",
+                "type": "IAL2",
+                "assigner": "CLEAR"
+            }
+        ],
+        "name": [{
+            "given": [clear_claims.get("given_name", "")],
+            "family": [clear_claims.get("family_name", "")],
+            "text": f"{clear_claims.get('given_name', '')} {clear_claims.get('middle_name', '')} {clear_claims.get('family_name', '')}".replace("  ", " ").strip(),
+            "use": "usual"
+        }],
+        "birthDate": clear_claims.get("birthdate"),
+        "active": True
+    }
+    
+    if clear_claims.get("middle_name"):
+        patient["name"][0]["given"].append(clear_claims["middle_name"])
+    
+    if clear_claims.get("gender"):
+        patient["gender"] = clear_claims["gender"]
+    
+    address = clear_claims.get("address")
+    if address:
+        patient["address"] = [{
+            "line": [address.get("street_address", "")],
+            "city": address.get("locality", ""),
+            "state": address.get("region", ""),
+            "postalCode": address.get("postal_code", ""),
+            "country": address.get("country", "US"),
+            "use": "home"
+        }]
+    
+    phone = clear_claims.get("phone_number")
+    if phone:
+        phone_clean = re.sub(r"^\+1", "", phone)
+        phone_clean = re.sub(r"\D", "", phone_clean)
+        patient["telecom"] = [{
+            "value": phone_clean,
+            "system": "phone",
+            "use": "home"
+        }]
+    
+    historical = clear_claims.get("historical_address", [])
+    if historical:
+        if "address" not in patient:
+            patient["address"] = []
+        for hist in historical:
+            patient["address"].append({
+                "line": [hist.get("street_address", "")],
+                "city": hist.get("locality", ""),
+                "state": hist.get("region", ""),
+                "postalCode": hist.get("postal_code", ""),
+                "country": hist.get("country", "US"),
+                "use": "old",
+                "type": "both"
+            })
+    
+    alternate = {
+        "identifier": [{
+            "value": clear_claims.get("sub", ""),
+            "system": CLEAR_OID,
+            "use": "secondary",
+            "type": "IAL2",
+            "assigner": "CLEAR"
+        }],
+        "name": [{
+            "given": [clear_claims.get("given_name", "")],
+            "family": [clear_claims.get("family_name", "")],
+            "use": "usual"
+        }],
+        "birthDate": clear_claims.get("birthdate")
+    }
+    
+    if clear_claims.get("middle_name"):
+        alternate["name"][0]["given"].append(clear_claims["middle_name"])
+    
+    if clear_claims.get("gender"):
+        alternate["gender"] = clear_claims["gender"]
+    
+    if address:
+        alternate["address"] = [{
+            "line": [address.get("street_address", "")],
+            "city": address.get("locality", ""),
+            "state": address.get("region", ""),
+            "postalCode": address.get("postal_code", ""),
+            "use": "home"
+        }]
+    
+    if phone and clear_claims.get("phone_number_verified") is True:
+        phone_clean = re.sub(r"^\+1", "", phone)
+        phone_clean = re.sub(r"\D", "", phone_clean)
+        alternate["telecom"] = [{
+            "value": phone_clean,
+            "system": "phone",
+            "use": "home"
+        }]
+    
+    patient["alternatePatients"] = [alternate]
+    
+    return patient
+
+def create_patient(environment: str, cw_jwt: str, patient_object: Dict[str, Any], skip_verify: bool = False) -> Dict[str, Any]:
+    base_url = API_BASE_URLS[environment]
+    patient_url = f"{base_url}org/{CW_ORG_OID}/Patient"
+    
+    cert, verify = get_ssl_context(skip_verify)
+    
+    headers = {
+        "Authorization": f"Bearer {cw_jwt}",
+        "Accept": "application/fhir+json",
+        "Content-Type": "application/fhir+json"
+    }
+    
+    try:
+        response = requests.post(
+            patient_url,
+            headers=headers,
+            json=patient_object,
+            cert=cert,
+            verify=verify,
+            timeout=55
+        )
+        
+        if response.status_code >= 200 and response.status_code < 300:
+            return {
+                "success": True,
+                "patient": response.json() if response.text else {},
+                "patient_object": patient_object
+            }
+        else:
+            return {
+                "success": False,
+                "error": f"HTTP {response.status_code}: {response.text}",
+                "patient_object": patient_object
+            }
+    except Exception as e:
+        return {"success": False, "error": str(e), "patient_object": patient_object}
 
 DOCUMENT_STATUS_OPTIONS = [
     {"value": "", "label": "All Statuses"},
@@ -375,22 +627,60 @@ with st.sidebar:
         format_func=lambda x: "Integration" if x == "integration" else "Production"
     )
     
-    jwt_token = st.text_area(
-        "JWT Token",
+    clear_id_token = st.text_area(
+        "CLEAR ID Token",
         height=100,
-        placeholder="Paste your JWT token here...",
-        help="Bearer token for CommonWell API authentication"
+        placeholder="Paste your CLEAR ID Token here (eyJhbGciOiJSUzI1NiIs...)...",
+        help="CLEAR OIDC ID Token from Accounts Team API. The CommonWell JWT will be generated automatically."
     )
     
-    if jwt_token:
-        validation = validate_jwt(jwt_token)
-        if validation["valid"]:
-            if validation.get("expires"):
-                st.success(f"Valid token - Expires: {validation['expires']}")
+    jwt_token = ""
+    clear_claims = None
+    token_hash = ""
+    
+    if "jwt_source_token" not in st.session_state:
+        st.session_state["jwt_source_token"] = ""
+    if "generated_jwt" not in st.session_state:
+        st.session_state["generated_jwt"] = ""
+    
+    if clear_id_token:
+        import hashlib
+        token_hash = hashlib.sha256(clear_id_token.encode()).hexdigest()[:16]
+        
+        if st.session_state["jwt_source_token"] != token_hash:
+            st.session_state["generated_jwt"] = ""
+            st.session_state["jwt_source_token"] = ""
+        
+        clear_claims = decode_clear_id_token(clear_id_token)
+        if clear_claims:
+            required_claims = ["given_name", "family_name", "birthdate"]
+            missing_claims = [c for c in required_claims if not clear_claims.get(c)]
+            
+            if missing_claims:
+                st.error(f"CLEAR token missing required claims: {', '.join(missing_claims)}")
+                clear_claims = None
             else:
-                st.success("Valid token format")
+                st.info(f"Patient: {clear_claims.get('given_name', '')} {clear_claims.get('family_name', '')} | DOB: {clear_claims.get('birthdate', 'N/A')}")
+                
+                if st.button("Generate CommonWell JWT", type="primary", use_container_width=True):
+                    with st.spinner("Generating JWT..."):
+                        jwt_result = generate_commonwell_jwt(clear_id_token)
+                        if "error" in jwt_result:
+                            st.error(f"JWT generation failed: {jwt_result['error']}")
+                        else:
+                            st.session_state["generated_jwt"] = jwt_result["jwt"]
+                            st.session_state["jwt_source_token"] = token_hash
+                            st.success("CommonWell JWT generated successfully! Expires in 1 hour.")
+                
+                if st.session_state["generated_jwt"] and st.session_state["jwt_source_token"] == token_hash:
+                    jwt_token = st.session_state["generated_jwt"]
+                    with st.expander("View Generated JWT"):
+                        st.code(jwt_token[:200] + "..." if len(jwt_token) > 200 else jwt_token)
         else:
-            st.error(validation["error"])
+            st.error("Invalid CLEAR ID Token format. Ensure it has 3 parts (header.payload.signature) with valid base64 encoding.")
+    else:
+        st.session_state["generated_jwt"] = ""
+        st.session_state["jwt_source_token"] = ""
     
     skip_tls = st.checkbox(
         "Skip TLS Verification",
@@ -398,7 +688,43 @@ with st.sidebar:
         help="Enable for testing with self-signed certificates"
     )
     
-    st.markdown('<p class="section-header">Patient Identifier</p>', unsafe_allow_html=True)
+    st.markdown('<p class="section-header">Create Patient in CommonWell</p>', unsafe_allow_html=True)
+    
+    st.caption("Create a patient record using demographics from the CLEAR ID Token before querying documents.")
+    
+    cvs_patient_id = st.text_input(
+        "CVS Patient ID",
+        placeholder="e.g., 601, PAT123456",
+        help="Unique patient identifier from CVS systems"
+    )
+    
+    cvs_aaid = st.text_input(
+        "CVS Assigning Authority ID",
+        placeholder="e.g., 2.16.840.1.113883.3.CVS",
+        help="OID of the CVS assigning authority"
+    )
+    
+    can_create = clear_claims and jwt_token and cvs_patient_id and cvs_aaid
+    
+    if st.button("Create Patient", disabled=not can_create, use_container_width=True):
+        if clear_claims and jwt_token:
+            with st.spinner("Creating patient..."):
+                patient_obj = build_patient_object(clear_claims, cvs_patient_id, cvs_aaid)
+                result = create_patient(environment, jwt_token, patient_obj, skip_tls)
+                
+                if result.get("success"):
+                    st.success("Patient created successfully!")
+                    with st.expander("View Patient Object"):
+                        st.json(result.get("patient_object", {}))
+                else:
+                    st.error(result.get("error", "Failed to create patient"))
+                    with st.expander("View Patient Object Sent"):
+                        st.json(result.get("patient_object", {}))
+    
+    if not clear_id_token:
+        st.warning("Enter a CLEAR ID Token and generate JWT first")
+    
+    st.markdown('<p class="section-header">Patient Identifier (for Query)</p>', unsafe_allow_html=True)
     
     aaid = st.text_input(
         "Assigning Authority ID (AAID)",

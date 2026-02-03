@@ -3,9 +3,220 @@ import { createServer, type Server } from "http";
 import https from "https";
 import fs from "fs";
 import path from "path";
+import crypto from "crypto";
+import jwt from "jsonwebtoken";
+import { v4 as uuidv4 } from "uuid";
 import { storage } from "./storage";
 import { BASE_URLS, API_BASE_URLS, type QueryParameters, insertQueryHistorySchema } from "@shared/schema";
 import { z } from "zod";
+
+const CW_ORG_OID = process.env.CW_ORG_OID || "2.16.840.1.113883.3.CVS";
+const CW_ORG_NAME = process.env.CW_ORG_NAME || "CVS Health";
+const CLEAR_OID = process.env.CLEAR_OID || "1.2.3.4.5.6.7.8.9";
+
+function getX5tFromCert(certPath: string): string | null {
+  try {
+    const certPem = fs.readFileSync(path.resolve(certPath), "utf8");
+    const certBase64 = certPem
+      .replace(/-----BEGIN CERTIFICATE-----/g, "")
+      .replace(/-----END CERTIFICATE-----/g, "")
+      .replace(/\s/g, "");
+    const certDer = Buffer.from(certBase64, "base64");
+    const thumbprint = crypto.createHash("sha1").update(certDer).digest();
+    return thumbprint.toString("base64url");
+  } catch (error) {
+    console.error("Failed to calculate x5t:", error);
+    return null;
+  }
+}
+
+function decodeIdToken(idToken: string): any {
+  try {
+    const parts = idToken.split(".");
+    if (parts.length !== 3) {
+      throw new Error("Invalid JWT format");
+    }
+    const payload = Buffer.from(parts[1], "base64url").toString("utf8");
+    return JSON.parse(payload);
+  } catch (error: any) {
+    throw new Error(`Failed to decode ID token: ${error.message}`);
+  }
+}
+
+function generateCommonWellJwt(clearIdToken: string): { jwt: string; claims: any } | { error: string } {
+  const certPath = process.env.CLIENT_CERT_PATH;
+  const keyPath = process.env.CLIENT_KEY_PATH;
+
+  if (!certPath || !keyPath) {
+    return { error: "Certificate paths not configured. Set CLIENT_CERT_PATH and CLIENT_KEY_PATH." };
+  }
+
+  try {
+    const privateKey = fs.readFileSync(path.resolve(keyPath), "utf8");
+    const claims = decodeIdToken(clearIdToken);
+    
+    const patientName = `${claims.given_name || ""} ${claims.family_name || ""}`.trim();
+    const now = Math.floor(Date.now() / 1000);
+    const exp = now + 3600;
+
+    const x5t = getX5tFromCert(certPath);
+    
+    const header: any = {
+      typ: "JWT",
+      alg: "RS384",
+    };
+    if (x5t) {
+      header.x5t = x5t;
+    }
+
+    const payload = {
+      iss: `urn:oid:${CW_ORG_OID}`,
+      sub: `urn:oid:${CW_ORG_OID}`,
+      aud: "urn:commonwellalliance.org",
+      iat: now,
+      nbf: now,
+      exp: exp,
+      jti: uuidv4(),
+      purposeofuse: "REQUEST",
+      "urn:oasis:names:tc:xacml:2.0:subject:role": "116154003",
+      "urn:oasis:names:tc:xspa:1.0:subject:subject-id": patientName,
+      "urn:oasis:names:tc:xspa:1.0:subject:organization": CW_ORG_NAME,
+      "urn:oasis:names:tc:xspa:1.0:subject:organization-id": `urn:oid:${CW_ORG_OID}`,
+      extensions: {
+        tefca_ias: {
+          id_token: clearIdToken
+        }
+      }
+    };
+
+    const signedJwt = jwt.sign(payload, privateKey, {
+      algorithm: "RS384",
+      header: header,
+    });
+
+    return { jwt: signedJwt, claims };
+  } catch (error: any) {
+    return { error: `Failed to generate JWT: ${error.message}` };
+  }
+}
+
+function buildPatientObject(clearClaims: any, cvsPatientId: string, cvsAaid: string): any {
+  const patient: any = {
+    identifier: [
+      {
+        value: cvsPatientId,
+        system: cvsAaid,
+        use: "official",
+        assigner: CW_ORG_NAME
+      },
+      {
+        value: clearClaims.sub,
+        system: CLEAR_OID,
+        use: "secondary",
+        type: "IAL2",
+        assigner: "CLEAR"
+      }
+    ],
+    name: [{
+      given: [clearClaims.given_name],
+      family: [clearClaims.family_name],
+      text: `${clearClaims.given_name} ${clearClaims.middle_name || ""} ${clearClaims.family_name}`.replace(/\s+/g, " ").trim(),
+      use: "usual"
+    }],
+    birthDate: clearClaims.birthdate,
+    active: true
+  };
+
+  if (clearClaims.middle_name) {
+    patient.name[0].given.push(clearClaims.middle_name);
+  }
+
+  if (clearClaims.gender) {
+    patient.gender = clearClaims.gender;
+  }
+
+  if (clearClaims.address) {
+    patient.address = [{
+      line: [clearClaims.address.street_address],
+      city: clearClaims.address.locality,
+      state: clearClaims.address.region,
+      postalCode: clearClaims.address.postal_code,
+      country: clearClaims.address.country || "US",
+      use: "home"
+    }];
+  }
+
+  if (clearClaims.phone_number) {
+    let phoneNumber = clearClaims.phone_number.replace(/^\+1/, "").replace(/\D/g, "");
+    patient.telecom = [{
+      value: phoneNumber,
+      system: "phone",
+      use: "home"
+    }];
+  }
+
+  if (clearClaims.historical_address && Array.isArray(clearClaims.historical_address)) {
+    if (!patient.address) patient.address = [];
+    clearClaims.historical_address.forEach((hist: any) => {
+      patient.address.push({
+        line: [hist.street_address],
+        city: hist.locality,
+        state: hist.region,
+        postalCode: hist.postal_code,
+        country: hist.country || "US",
+        use: "old",
+        type: "both"
+      });
+    });
+  }
+
+  const alternatePatient: any = {
+    identifier: [{
+      value: clearClaims.sub,
+      system: CLEAR_OID,
+      use: "secondary",
+      type: "IAL2",
+      assigner: "CLEAR"
+    }],
+    name: [{
+      given: [clearClaims.given_name],
+      family: [clearClaims.family_name],
+      use: "usual"
+    }],
+    birthDate: clearClaims.birthdate
+  };
+
+  if (clearClaims.middle_name) {
+    alternatePatient.name[0].given.push(clearClaims.middle_name);
+  }
+
+  if (clearClaims.gender) {
+    alternatePatient.gender = clearClaims.gender;
+  }
+
+  if (clearClaims.address) {
+    alternatePatient.address = [{
+      line: [clearClaims.address.street_address],
+      city: clearClaims.address.locality,
+      state: clearClaims.address.region,
+      postalCode: clearClaims.address.postal_code,
+      use: "home"
+    }];
+  }
+
+  if (clearClaims.phone_number && clearClaims.phone_number_verified === true) {
+    let phoneNumber = clearClaims.phone_number.replace(/^\+1/, "").replace(/\D/g, "");
+    alternatePatient.telecom = [{
+      value: phoneNumber,
+      system: "phone",
+      use: "home"
+    }];
+  }
+
+  patient.alternatePatients = [alternatePatient];
+
+  return patient;
+}
 
 function getHttpsAgent(): https.Agent | undefined {
   const certPath = process.env.CLIENT_CERT_PATH;
@@ -402,6 +613,153 @@ export async function registerRoutes(
       console.error("Download document error:", error);
       return res.status(500).json({
         error: "Failed to download document",
+        message: error.message,
+      });
+    }
+  });
+
+  const generateJwtSchema = z.object({
+    clearIdToken: z.string().min(1),
+  });
+
+  app.post("/api/generate-jwt", async (req, res) => {
+    try {
+      const parseResult = generateJwtSchema.safeParse(req.body);
+      
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          error: "Invalid request",
+          details: parseResult.error.errors 
+        });
+      }
+
+      const { clearIdToken } = parseResult.data;
+      const result = generateCommonWellJwt(clearIdToken);
+
+      if ("error" in result) {
+        return res.status(400).json({
+          error: result.error,
+        });
+      }
+
+      return res.json({
+        success: true,
+        jwt: result.jwt,
+        claims: result.claims,
+        expiresIn: 3600,
+      });
+    } catch (error: any) {
+      console.error("Generate JWT error:", error);
+      return res.status(500).json({
+        error: "Failed to generate JWT",
+        message: error.message,
+      });
+    }
+  });
+
+  const createPatientSchema = z.object({
+    environment: z.enum(["integration", "production"]),
+    clearIdToken: z.string().min(1),
+    cvsPatientId: z.string().min(1),
+    cvsAaid: z.string().min(1),
+  });
+
+  app.post("/api/create-patient", async (req, res) => {
+    try {
+      const parseResult = createPatientSchema.safeParse(req.body);
+      
+      if (!parseResult.success) {
+        return res.status(400).json({ 
+          error: "Invalid request",
+          details: parseResult.error.errors 
+        });
+      }
+
+      const { environment, clearIdToken, cvsPatientId, cvsAaid } = parseResult.data;
+
+      const jwtResult = generateCommonWellJwt(clearIdToken);
+      if ("error" in jwtResult) {
+        return res.status(400).json({ error: jwtResult.error });
+      }
+
+      const clearClaims = jwtResult.claims;
+      const patientObject = buildPatientObject(clearClaims, cvsPatientId, cvsAaid);
+
+      const baseUrl = API_BASE_URLS[environment];
+      const patientUrl = `${baseUrl}org/${CW_ORG_OID}/Patient`;
+
+      const httpsAgent = getHttpsAgent();
+      
+      const createPatient = (): Promise<{ status: number; statusText: string; data: string }> => {
+        return new Promise((resolve, reject) => {
+          const urlObj = new URL(patientUrl);
+          const body = JSON.stringify(patientObject);
+          
+          const reqOptions: https.RequestOptions = {
+            hostname: urlObj.hostname,
+            port: urlObj.port || 443,
+            path: urlObj.pathname,
+            method: "POST",
+            headers: {
+              "Authorization": `Bearer ${jwtResult.jwt}`,
+              "Accept": "application/fhir+json",
+              "Content-Type": "application/fhir+json",
+              "Content-Length": Buffer.byteLength(body),
+            },
+            agent: httpsAgent,
+            timeout: 55000,
+          };
+
+          const req = https.request(reqOptions, (response) => {
+            const chunks: Buffer[] = [];
+            response.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+            response.on("end", () => {
+              const buffer = Buffer.concat(chunks);
+              resolve({
+                status: response.statusCode || 500,
+                statusText: response.statusMessage || "Error",
+                data: buffer.toString("utf-8"),
+              });
+            });
+          });
+
+          req.on("error", reject);
+          req.on("timeout", () => {
+            req.destroy();
+            reject(new Error("Request timeout"));
+          });
+
+          req.write(body);
+          req.end();
+        });
+      };
+
+      const response = await createPatient();
+
+      let responseData;
+      try {
+        responseData = JSON.parse(response.data);
+      } catch {
+        responseData = { rawResponse: response.data };
+      }
+
+      if (response.status >= 200 && response.status < 300) {
+        return res.json({
+          success: true,
+          patient: responseData,
+          patientObject: patientObject,
+        });
+      } else {
+        return res.status(response.status).json({
+          error: `CommonWell API Error: ${response.status} ${response.statusText}`,
+          details: responseData,
+          patientObject: patientObject,
+        });
+      }
+    } catch (error: any) {
+      console.error("Create patient error:", error);
+      return res.status(500).json({
+        error: "Failed to create patient",
         message: error.message,
       });
     }

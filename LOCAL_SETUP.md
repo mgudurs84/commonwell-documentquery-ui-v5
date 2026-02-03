@@ -7,8 +7,8 @@ This is an internal testing tool for querying the CommonWell Health Alliance FHI
 
 - **Node.js** 18.x or higher (20.x recommended)
 - **npm** 9.x or higher
-- A valid **JWT token** for CommonWell API access
-- **Client Certificate** (.pem/.crt) and **Private Key** (.key) for mTLS authentication (required for Integration environment)
+- A valid **CLEAR ID Token** (from Accounts Team /token API) - the tool generates the CommonWell JWT automatically
+- **Client Certificate** (.pem/.crt) and **Private Key** (.key) for mTLS authentication AND JWT signing
 
 ## Quick Start (Windows)
 
@@ -62,9 +62,24 @@ npm run dev
 set CLIENT_CERT_PATH=C:\certs\client-cert.pem
 set CLIENT_KEY_PATH=C:\certs\client-key.pem
 set CA_CERT_PATH=C:\certs\ca-cert.pem
+set CW_ORG_OID=2.16.840.1.113883.3.CVS
+set CW_ORG_NAME=CVS Health
+set CLEAR_OID=1.2.3.4.5.6.7.8.9
 set SKIP_TLS_VERIFY=true
 npm run dev
 ```
+
+### Environment Variables
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `CLIENT_CERT_PATH` | Yes | Path to client certificate for mTLS and JWT signing |
+| `CLIENT_KEY_PATH` | Yes | Path to private key for mTLS and JWT signing |
+| `CA_CERT_PATH` | No | Path to CA certificate for server verification |
+| `CW_ORG_OID` | No | Your organization OID (default: 2.16.840.1.113883.3.CVS) |
+| `CW_ORG_NAME` | No | Your organization name (default: CVS Health) |
+| `CLEAR_OID` | No | CLEAR assigning authority OID (default: 1.2.3.4.5.6.7.8.9) |
+| `SKIP_TLS_VERIFY` | No | Set to "true" to skip TLS verification (testing only) |
 
 **Note:** A pre-configured `run-local.bat` is included - just update the certificate paths and run it.
 
@@ -115,9 +130,60 @@ Results are displayed in an expandable JSON viewer with syntax highlighting.
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/api/execute-query` | POST | Execute a CommonWell DocumentReference query |
+| `/api/generate-jwt` | POST | Generate CommonWell JWT from CLEAR ID Token |
+| `/api/create-patient` | POST | Create a patient in CommonWell using CLEAR demographics |
 | `/api/download-document` | POST | Download a document using Binary Retrieve API |
 | `/api/query-history` | GET | Get recent query history |
 | `/api/query-history` | DELETE | Clear query history |
+
+### JWT Generation API
+
+The `/api/generate-jwt` endpoint creates a CommonWell JWT from a CLEAR ID Token.
+
+**Request Body:**
+```json
+{
+  "clearIdToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "jwt": "eyJhbGciOiJSUzM4NCIsInR5cCI6IkpXVCIsIng1dCI6Ii4uLiJ9...",
+  "claims": {
+    "given_name": "CAMILA",
+    "family_name": "LOPEZ",
+    "birthdate": "1987-09-12",
+    ...
+  },
+  "expiresIn": 3600
+}
+```
+
+### Patient Create API
+
+The `/api/create-patient` endpoint creates a patient in CommonWell using demographics from the CLEAR ID Token.
+
+**Request Body:**
+```json
+{
+  "environment": "integration",
+  "clearIdToken": "eyJhbGciOiJSUzI1NiIs...",
+  "cvsPatientId": "601",
+  "cvsAaid": "2.16.840.1.113883.3.CVS"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "patient": { ... },
+  "patientObject": { ... }
+}
+```
 
 ### Document Download API
 

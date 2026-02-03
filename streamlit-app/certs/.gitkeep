@@ -1,6 +1,14 @@
-# Place your mTLS certificates in this folder:
+# Place your mTLS and JWT signing certificates in this folder:
+#
+# For mTLS (CommonWell API calls):
 # - client.crt (Client certificate in PEM format)
 # - client.key (Client private key in PEM format)
 # - ca.crt (CA certificate in PEM format, optional)
+#
+# For JWT Signing (CommonWell JWT generation):
+# - certificate.pem (X.509 certificate for x5t header)
+# - private_key.pem (RSA private key for RS384 signing)
+#
+# Note: In non-production, the same certificate is typically used for both mTLS and JWT signing.
 #
 # These files should NOT be committed to version control.

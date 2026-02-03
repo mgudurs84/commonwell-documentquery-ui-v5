@@ -7,6 +7,7 @@ import { Play, RotateCcw, Loader2 } from "lucide-react";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { AuthenticationSection } from "@/components/query-builder/authentication-section";
 import { PatientIdentifierSection } from "@/components/query-builder/patient-identifier-section";
+import { PatientCreateSection } from "@/components/query-builder/patient-create-section";
 import { StatusFilterSection } from "@/components/query-builder/status-filter-section";
 import { DateFilterSection } from "@/components/query-builder/date-filter-section";
 import { DocumentTypeSection } from "@/components/query-builder/document-type-section";
@@ -16,11 +17,12 @@ import { UrlPreview, buildQueryUrl } from "@/components/query-builder/url-previe
 import { ResultsDisplay } from "@/components/results-display";
 import { QueryHistoryPanel } from "@/components/query-history";
 import { apiRequest } from "@/lib/queryClient";
-import type { QueryParameters, Environment, DocumentStatus, QueryHistory } from "@shared/schema";
+import type { QueryParameters, Environment, DocumentStatus, QueryHistory, ClearIdTokenClaims } from "@shared/schema";
 
 const defaultParams: QueryParameters = {
   environment: "integration",
   jwtToken: "",
+  clearIdToken: "",
   aaid: "",
   patientId: "",
   status: "current",
@@ -43,6 +45,7 @@ const defaultParams: QueryParameters = {
 export default function Home() {
   const [params, setParams] = useState<QueryParameters>(defaultParams);
   const [responseTime, setResponseTime] = useState<number | undefined>();
+  const [clearClaims, setClearClaims] = useState<ClearIdTokenClaims | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -95,7 +98,7 @@ export default function Home() {
       toast({
         variant: "destructive",
         title: "JWT Token required",
-        description: "Please provide a valid JWT token.",
+        description: "Please generate a CommonWell JWT from your CLEAR ID Token first.",
       });
       return;
     }
@@ -113,6 +116,7 @@ export default function Home() {
   const handleReset = () => {
     setParams(defaultParams);
     setResponseTime(undefined);
+    setClearClaims(null);
     toast({
       title: "Form reset",
       description: "All fields have been cleared.",
@@ -185,6 +189,16 @@ export default function Home() {
                   onEnvironmentChange={(v) => updateParam("environment", v)}
                   jwtToken={params.jwtToken}
                   onJwtTokenChange={(v) => updateParam("jwtToken", v)}
+                  clearIdToken={params.clearIdToken || ""}
+                  onClearIdTokenChange={(v) => updateParam("clearIdToken", v)}
+                  onClearClaimsChange={setClearClaims}
+                />
+
+                <PatientCreateSection
+                  environment={params.environment}
+                  clearIdToken={params.clearIdToken || ""}
+                  clearClaims={clearClaims}
+                  defaultAaid={params.aaid}
                 />
 
                 <PatientIdentifierSection
