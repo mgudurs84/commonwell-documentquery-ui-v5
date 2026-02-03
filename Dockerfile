@@ -45,11 +45,11 @@ COPY certs/ ./certs/
 ENV NODE_ENV=production
 ENV PORT=8080
 
-# Default certificate paths (override via Cloud Run environment)
+# Default certificate paths (override via Kubernetes ConfigMap/environment)
 ENV CLIENT_CERT_PATH=/app/certs/client-cert.pem
 ENV CLIENT_KEY_PATH=/app/certs/client-key.pem
 
-# GCP Cloud Run expects the app to listen on PORT environment variable
+# Expose port for GKE container
 EXPOSE 8080
 
 # Health check for container orchestration
