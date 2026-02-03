@@ -159,8 +159,8 @@ export const BINARY_BASE_URLS = {
 };
 
 export const API_BASE_URLS = {
-  integration: "https://api.integration.commonwellalliance.lkopera.com",
-  production: "https://api.commonwellalliance.lkopera.com",
+  integration: "https://api.integration.commonwellalliance.lkopera.com/v2/",
+  production: "https://api.commonwellalliance.lkopera.com/v2/",
 };
 
 export interface BinaryResource {

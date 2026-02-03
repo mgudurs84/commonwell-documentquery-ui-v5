@@ -10,9 +10,9 @@ import { storage } from "./storage";
 import { BASE_URLS, API_BASE_URLS, type QueryParameters, insertQueryHistorySchema } from "@shared/schema";
 import { z } from "zod";
 
-const CW_ORG_OID = process.env.CW_ORG_OID || "2.16.840.1.113883.3.CVS";
+const CW_ORG_OID = process.env.CW_ORG_OID || "2.16.840.1.113883.3.5958.1000.300";
 const CW_ORG_NAME = process.env.CW_ORG_NAME || "CVS Health";
-const CLEAR_OID = process.env.CLEAR_OID || "1.2.3.4.5.6.7.8.9";
+const CLEAR_OID = process.env.CLEAR_OID || "2.16.840.1.113883.3.5958.1000.300.1";
 
 function getX5tFromCert(certPath: string): string | null {
   try {
@@ -77,7 +77,7 @@ function generateCommonWellJwt(clearIdToken: string): { jwt: string; claims: any
       nbf: now,
       exp: exp,
       jti: uuidv4(),
-      purposeofuse: "REQUEST",
+      "urn:oasis:names:tc:xspa:1.0:subject:purposeofuse": "REQUEST",
       "urn:oasis:names:tc:xacml:2.0:subject:role": "116154003",
       "urn:oasis:names:tc:xspa:1.0:subject:subject-id": patientName,
       "urn:oasis:names:tc:xspa:1.0:subject:organization": CW_ORG_NAME,
@@ -688,6 +688,9 @@ export async function registerRoutes(
       const baseUrl = API_BASE_URLS[environment];
       const patientUrl = `${baseUrl}org/${CW_ORG_OID}/Patient`;
 
+      console.log("[Patient Create] URL:", patientUrl);
+      console.log("[Patient Create] Request body:", JSON.stringify(patientObject, null, 2));
+
       const httpsAgent = getHttpsAgent();
       
       const createPatient = (): Promise<{ status: number; statusText: string; data: string }> => {
@@ -735,6 +738,9 @@ export async function registerRoutes(
       };
 
       const response = await createPatient();
+
+      console.log("[Patient Create] Response status:", response.status, response.statusText);
+      console.log("[Patient Create] Response body:", response.data);
 
       let responseData;
       try {

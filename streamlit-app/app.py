@@ -108,9 +108,14 @@ API_BASE_URLS = {
     "production": "https://api.commonwellalliance.lkopera.com/v2/R4/"
 }
 
-CW_ORG_OID = os.environ.get("CW_ORG_OID", "2.16.840.1.113883.3.CVS")
+PATIENT_API_BASE_URLS = {
+    "integration": "https://api.integration.commonwellalliance.lkopera.com/v2/",
+    "production": "https://api.commonwellalliance.lkopera.com/v2/"
+}
+
+CW_ORG_OID = os.environ.get("CW_ORG_OID", "2.16.840.1.113883.3.5958.1000.300")
 CW_ORG_NAME = os.environ.get("CW_ORG_NAME", "CVS Health")
-CLEAR_OID = os.environ.get("CLEAR_OID", "1.2.3.4.5.6.7.8.9")
+CLEAR_OID = os.environ.get("CLEAR_OID", "2.16.840.1.113883.3.5958.1000.300.1")
 
 def decode_clear_id_token(token: str) -> Optional[Dict[str, Any]]:
     try:
@@ -182,7 +187,7 @@ def generate_commonwell_jwt(clear_id_token: str) -> Dict[str, Any]:
             "nbf": int(now.timestamp()),
             "exp": int((now + timedelta(hours=1)).timestamp()),
             "jti": str(uuid.uuid4()),
-            "purposeofuse": "REQUEST",
+            "urn:oasis:names:tc:xspa:1.0:subject:purposeofuse": "REQUEST",
             "urn:oasis:names:tc:xacml:2.0:subject:role": "116154003",
             "urn:oasis:names:tc:xspa:1.0:subject:subject-id": patient_name,
             "urn:oasis:names:tc:xspa:1.0:subject:organization": CW_ORG_NAME,
@@ -314,8 +319,11 @@ def build_patient_object(clear_claims: Dict[str, Any], cvs_patient_id: str, cvs_
     return patient
 
 def create_patient(environment: str, cw_jwt: str, patient_object: Dict[str, Any], skip_verify: bool = False) -> Dict[str, Any]:
-    base_url = API_BASE_URLS[environment]
+    base_url = PATIENT_API_BASE_URLS[environment]
     patient_url = f"{base_url}org/{CW_ORG_OID}/Patient"
+    
+    print(f"[Patient Create] URL: {patient_url}")
+    print(f"[Patient Create] Request body: {json.dumps(patient_object, indent=2)}")
     
     cert, verify = get_ssl_context(skip_verify)
     
@@ -335,6 +343,9 @@ def create_patient(environment: str, cw_jwt: str, patient_object: Dict[str, Any]
             timeout=55
         )
         
+        print(f"[Patient Create] Response status: {response.status_code}")
+        print(f"[Patient Create] Response body: {response.text}")
+        
         if response.status_code >= 200 and response.status_code < 300:
             return {
                 "success": True,
@@ -348,6 +359,7 @@ def create_patient(environment: str, cw_jwt: str, patient_object: Dict[str, Any]
                 "patient_object": patient_object
             }
     except Exception as e:
+        print(f"[Patient Create] Error: {str(e)}")
         return {"success": False, "error": str(e), "patient_object": patient_object}
 
 DOCUMENT_STATUS_OPTIONS = [
