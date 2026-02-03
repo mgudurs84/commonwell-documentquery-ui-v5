@@ -1,6 +1,6 @@
 # CommonWell Document Query Tool - GCP Deployment Guide
 
-This guide covers deploying the CommonWell Document Query Tool to Google Cloud Platform using Cloud Run.
+This guide covers deploying the CommonWell Document Query Tool to Google Cloud Platform using Cloud Run or GKE (Google Kubernetes Engine).
 
 ## Prerequisites
 
@@ -127,15 +127,164 @@ curl $(gcloud run services describe commonwell-query --format='value(status.url)
 | `CLEAR_OID` | No | CLEAR assigning authority OID |
 | `SKIP_TLS_VERIFY` | No | Skip TLS verification (NOT recommended for production) |
 
+---
+
+## GKE Deployment (Google Kubernetes Engine)
+
+For GKE, you'll use Kubernetes ConfigMaps and Secrets instead of the batch file variables.
+
+### 1. Create a GKE Cluster (if needed)
+
+```bash
+gcloud container clusters create commonwell-cluster \
+  --region=$REGION \
+  --num-nodes=2 \
+  --machine-type=e2-small
+```
+
+### 2. Create Kubernetes Secret for Certificates
+
+```bash
+# Create secret from certificate files
+kubectl create secret generic commonwell-certs \
+  --from-file=client-cert.pem=/path/to/your/client-cert.pem \
+  --from-file=client-key.pem=/path/to/your/client-key.pem
+```
+
+### 3. Create ConfigMap for Environment Variables
+
+Create a file `configmap.yaml`:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: commonwell-config
+data:
+  NODE_ENV: "production"
+  CW_ORG_OID: "2.16.840.1.113883.3.5958.1000.300"
+  CW_ORG_NAME: "CVS Health"
+  CLEAR_OID: "2.16.840.1.113883.3.5958.1000.300.1"
+  CLIENT_CERT_PATH: "/app/certs/client-cert.pem"
+  CLIENT_KEY_PATH: "/app/certs/client-key.pem"
+```
+
+Apply it:
+```bash
+kubectl apply -f configmap.yaml
+```
+
+### 4. Create Kubernetes Deployment
+
+Create a file `deployment.yaml`:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: commonwell-query
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: commonwell-query
+  template:
+    metadata:
+      labels:
+        app: commonwell-query
+    spec:
+      containers:
+      - name: commonwell-query
+        image: ${REGION}-docker.pkg.dev/${PROJECT_ID}/commonwell-query/app:latest
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: commonwell-config
+        volumeMounts:
+        - name: certs
+          mountPath: /app/certs
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /api/query-history
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /api/query-history
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: certs
+        secret:
+          secretName: commonwell-certs
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: commonwell-query-service
+spec:
+  type: LoadBalancer
+  selector:
+    app: commonwell-query
+  ports:
+  - port: 80
+    targetPort: 8080
+```
+
+### 5. Deploy to GKE
+
+Pre-built Kubernetes manifests are available in the `k8s/` folder:
+
+```bash
+# Edit k8s/deployment.yaml to set your image URL
+# Replace REPLACE_WITH_YOUR_IMAGE_URL with your actual image path
+
+# Apply all manifests
+kubectl apply -f k8s/configmap.yaml
+kubectl apply -f k8s/deployment.yaml
+kubectl apply -f k8s/service.yaml
+```
+
+### 6. Get External IP
+
+```bash
+kubectl get service commonwell-query-service
+```
+
+### GKE Environment Variables Summary
+
+| run-local.bat Variable | GKE Equivalent |
+|------------------------|----------------|
+| `CLIENT_CERT_PATH` | Mounted from Secret + ConfigMap |
+| `CLIENT_KEY_PATH` | Mounted from Secret + ConfigMap |
+| `CW_ORG_OID` | ConfigMap |
+| `CW_ORG_NAME` | ConfigMap |
+| `CLEAR_OID` | ConfigMap |
+| `SKIP_TLS_VERIFY` | ConfigMap (not recommended for production) |
+
+---
+
 ## Security Considerations
 
-1. **Use Secret Manager** for all certificates and sensitive configuration
+1. **Use Secret Manager or Kubernetes Secrets** for all certificates and sensitive configuration
 2. **Enable IAM authentication** for production deployments:
    ```bash
    gcloud run deploy commonwell-query --no-allow-unauthenticated ...
    ```
 3. **Use VPC Connector** if CommonWell API requires specific IP allowlisting
 4. **Enable Cloud Armor** for additional protection
+5. **For GKE**: Use Workload Identity for secure access to GCP services
 
 ## Local Docker Testing
 

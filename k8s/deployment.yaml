@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: commonwell-query
+  labels:
+    app: commonwell-query
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: commonwell-query
+  template:
+    metadata:
+      labels:
+        app: commonwell-query
+    spec:
+      containers:
+      - name: commonwell-query
+        image: REPLACE_WITH_YOUR_IMAGE_URL
+        ports:
+        - containerPort: 8080
+        envFrom:
+        - configMapRef:
+            name: commonwell-config
+        volumeMounts:
+        - name: certs
+          mountPath: /app/certs
+          readOnly: true
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "100m"
+          limits:
+            memory: "512Mi"
+            cpu: "500m"
+        livenessProbe:
+          httpGet:
+            path: /api/query-history
+            port: 8080
+          initialDelaySeconds: 10
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /api/query-history
+            port: 8080
+          initialDelaySeconds: 5
+          periodSeconds: 10
+      volumes:
+      - name: certs
+        secret:
+          secretName: commonwell-certs
