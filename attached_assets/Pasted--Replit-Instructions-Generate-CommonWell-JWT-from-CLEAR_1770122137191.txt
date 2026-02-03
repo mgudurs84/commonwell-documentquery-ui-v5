@@ -1,0 +1,238 @@
+# Replit Instructions: Generate CommonWell JWT from CLEAR IDToken (IAS Use Case)
+
+## What This Does
+
+Takes a CLEAR OIDC `id_token` (IAL-2 verified) as input and produces a signed CommonWell JWT for the Individual Access Services (IAS) use case.
+
+---
+
+## Input: CLEAR IDToken
+
+The `id_token` is a JWT from CLEAR containing IAL-2 verified patient demographics. It arrives from the Accounts Team `/token` API (input: `Patient_Profile_ID` + `Project_ID = "CLEAR"`).
+
+Sample decoded payload:
+
+```json
+{
+  "iss": "https://verified.clearme.com/integrations",
+  "sub": "LbRV8ruRc7S9qzFeZzlKfgy78ImucDAnhfs8niXprW",
+  "aud": ["urn:oid:1.11.111.1.111111.1.1111"],
+  "exp": 1757106679,
+  "iat": 1757103079,
+  "jti": "9be1a686-7200-4592-9d74-a6b2acbabf74",
+  "auth_time": 1757103061,
+  "given_name": "CAMILA",
+  "family_name": "LOPEZ",
+  "middle_name": "MARIA",
+  "birthdate": "1987-09-12",
+  "gender": "F",
+  "phone_number": "+14694694321",
+  "phone_number_verified": true,
+  "address": {
+    "street_address": "3268 WEST JOHNSON ST., APT 117",
+    "locality": "GARLAND",
+    "region": "TX",
+    "postal_code": "75043",
+    "country": "US"
+  },
+  "historical_address": [...]
+}
+```
+
+---
+
+## Output: CommonWell JWT
+
+### Header
+
+```json
+{
+  "typ": "JWT",
+  "alg": "RS384",
+  "x5t": "<base64url SHA-1 thumbprint of your X.509 certificate>"
+}
+```
+
+**Algorithm MUST be RS384** (RSA with SHA-384). Not RS256.
+
+### Payload
+
+```json
+{
+  "iss": "urn:oid:{YOUR_CVS_ORG_OID}",
+  "sub": "urn:oid:{YOUR_CVS_ORG_OID}",
+  "aud": "urn:commonwellalliance.org",
+  "iat": 1757103100,
+  "nbf": 1757103100,
+  "exp": 1757106700,
+  "jti": "<uuid-v4>",
+
+  "purposeofuse": "REQUEST",
+
+  "urn:oasis:names:tc:xacml:2.0:subject:role": "116154003",
+  "urn:oasis:names:tc:xspa:1.0:subject:subject-id": "CAMILA LOPEZ",
+  "urn:oasis:names:tc:xspa:1.0:subject:organization": "CVS Health",
+  "urn:oasis:names:tc:xspa:1.0:subject:organization-id": "urn:oid:{YOUR_CVS_ORG_OID}",
+
+  "extensions": {
+    "tefca_ias": {
+      "id_token": "<the entire raw CLEAR id_token string>"
+    }
+  }
+}
+```
+
+### Field-by-Field Explanation
+
+| JWT Field | Value | Where It Comes From |
+|---|---|---|
+| `iss` | `"urn:oid:2.16.840.1.113883.3.CVS"` | Your CVS org OID (env config) |
+| `sub` | `"urn:oid:2.16.840.1.113883.3.CVS"` | Same as `iss` for IAS |
+| `aud` | `"urn:commonwellalliance.org"` | Fixed — always this value |
+| `iat` | Unix timestamp (now) | Generated at runtime |
+| `nbf` | Unix timestamp (now) | Same as `iat` |
+| `exp` | Unix timestamp (now + 1hr) | Max 8 hours from `iat` |
+| `jti` | UUID v4 | Generate fresh per request |
+| `purposeofuse` | `"REQUEST"` | Fixed for IAS (CommonWell maps to T-IAS internally) |
+| `subject:role` | `"116154003"` | SNOMED code for Patient (IAS = patient accessing own records) |
+| `subject:subject-id` | `"CAMILA LOPEZ"` | `given_name` + `family_name` from IDToken |
+| `subject:organization` | `"CVS Health"` | Org name (env config) |
+| `subject:organization-id` | `"urn:oid:2.16.840.1.113883.3.CVS"` | Org OID (env config) |
+| `extensions.tefca_ias.id_token` | `"eyJhbGciOiJSUzI1Ni..."` | The **entire raw CLEAR id_token string** — do NOT decode it, pass as-is |
+
+---
+
+## Python Implementation
+
+### Dependencies
+
+```
+PyJWT==2.8.0
+cryptography==42.0.0
+```
+
+### Code
+
+```python
+import jwt
+import uuid
+import hashlib
+import base64
+from datetime import datetime, timedelta, timezone
+from cryptography import x509
+from cryptography.hazmat.primitives import serialization
+
+
+# ── Configuration (set via env vars) ──
+CW_ORG_OID = "2.16.840.1.113883.3.CVS"          # Your org OID
+CW_ORG_NAME = "CVS Health"                        # Your org name
+CW_PRIVATE_KEY_PATH = "./certs/private_key.pem"   # RSA private key
+CW_CERTIFICATE_PATH = "./certs/certificate.pem"   # X.509 certificate
+
+
+def get_x5t(cert_path: str) -> str:
+    """Calculate base64url SHA-1 thumbprint of the certificate."""
+    with open(cert_path, "rb") as f:
+        cert = x509.load_pem_x509_certificate(f.read())
+    cert_der = cert.public_bytes(serialization.Encoding.DER)
+    thumbprint = hashlib.sha1(cert_der).digest()
+    return base64.urlsafe_b64encode(thumbprint).rstrip(b"=").decode("utf-8")
+
+
+def create_commonwell_jwt(clear_id_token: str) -> str:
+    """
+    Generate a CommonWell JWT for IAS use case.
+
+    Args:
+        clear_id_token: The raw CLEAR id_token string (do NOT decode it)
+
+    Returns:
+        Signed CommonWell JWT string
+    """
+
+    # Load private key
+    with open(CW_PRIVATE_KEY_PATH, "rb") as f:
+        private_key = serialization.load_pem_private_key(f.read(), password=None)
+
+    # Extract patient name from id_token (decode without signature check)
+    claims = jwt.decode(clear_id_token, options={"verify_signature": False})
+    patient_name = f"{claims['given_name']} {claims['family_name']}"
+
+    now = datetime.now(timezone.utc)
+
+    # Header
+    headers = {
+        "typ": "JWT",
+        "alg": "RS384",
+        "x5t": get_x5t(CW_CERTIFICATE_PATH)
+    }
+
+    # Payload
+    payload = {
+        # Standard JWT claims
+        "iss": f"urn:oid:{CW_ORG_OID}",
+        "sub": f"urn:oid:{CW_ORG_OID}",
+        "aud": "urn:commonwellalliance.org",
+        "iat": int(now.timestamp()),
+        "nbf": int(now.timestamp()),
+        "exp": int((now + timedelta(hours=1)).timestamp()),
+        "jti": str(uuid.uuid4()),
+
+        # Purpose of use — REQUEST for IAS
+        "purposeofuse": "REQUEST",
+
+        # XUA/XSPA claims — Patient role for IAS
+        "urn:oasis:names:tc:xacml:2.0:subject:role": "116154003",
+        "urn:oasis:names:tc:xspa:1.0:subject:subject-id": patient_name,
+        "urn:oasis:names:tc:xspa:1.0:subject:organization": CW_ORG_NAME,
+        "urn:oasis:names:tc:xspa:1.0:subject:organization-id": f"urn:oid:{CW_ORG_OID}",
+
+        # TEFCA IAS extension — embed the full CLEAR id_token
+        "extensions": {
+            "tefca_ias": {
+                "id_token": clear_id_token
+            }
+        }
+    }
+
+    # Sign with RS384
+    return jwt.encode(payload, private_key, algorithm="RS384", headers=headers)
+```
+
+### Usage
+
+```python
+# Input: raw CLEAR id_token string from Accounts Team API
+clear_id_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
+
+# Output: signed CommonWell JWT
+commonwell_jwt = create_commonwell_jwt(clear_id_token)
+
+# Use in all CommonWell API calls:
+# Authorization: Bearer {commonwell_jwt}
+```
+
+---
+
+## Environment Variables Needed
+
+```env
+CW_ORG_OID=2.16.840.1.113883.3.CVS
+CW_ORG_NAME=CVS Health
+CW_PRIVATE_KEY_PATH=./certs/private_key.pem
+CW_CERTIFICATE_PATH=./certs/certificate.pem
+```
+
+The same certificate is used for both mTLS and JWT signing in non-prod. Upload it to the CommonWell Portal under both Authentication and Signing certificate slots.
+
+---
+
+## Critical Rules
+
+1. **Algorithm = RS384** — CommonWell requires RS384, not RS256
+2. **purposeofuse = "REQUEST"** — This is the IAS purpose code (CommonWell translates to T-IAS for TEFCA)
+3. **Subject role = "116154003"** — SNOMED Patient code (IAS = patient accessing own records, not a clinician)
+4. **Embed the raw id_token** — Pass the entire CLEAR id_token string into `extensions.tefca_ias.id_token` as-is; do not decode or re-encode it
+5. **subject-id = patient name** — Extract `given_name` + `family_name` from the id_token and use as subject-id
+6. **exp max 8 hours** — CommonWell rejects JWTs with expiration beyond 8 hours from `iat`
+7. **x5t in header** — The base64url SHA-1 thumbprint of your X.509 certificate must be in the JWT header
