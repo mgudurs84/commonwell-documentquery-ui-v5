@@ -15,6 +15,54 @@ const CW_ORG_OID = config.CW_ORG_OID;
 const CW_ORG_NAME = config.CW_ORG_NAME;
 const CLEAR_OID = config.CLEAR_OID;
 
+function formatTimestamp(): string {
+  return new Date().toISOString();
+}
+
+function logSection(title: string): void {
+  console.log(`\n${"=".repeat(80)}`);
+  console.log(`[${formatTimestamp()}] ${title}`);
+  console.log("=".repeat(80));
+}
+
+function logRequest(operation: string, method: string, url: string, headers: Record<string, string>, body?: any): void {
+  logSection(`${operation} - REQUEST`);
+  console.log(`Method: ${method}`);
+  console.log(`URL: ${url}`);
+  console.log(`\nHeaders:`);
+  for (const [key, value] of Object.entries(headers)) {
+    if (key.toLowerCase() === "authorization") {
+      const tokenPreview = value.length > 50 ? `${value.substring(0, 50)}...` : value;
+      console.log(`  ${key}: ${tokenPreview}`);
+    } else {
+      console.log(`  ${key}: ${value}`);
+    }
+  }
+  if (body) {
+    console.log(`\nRequest Body:`);
+    console.log(typeof body === "string" ? body : JSON.stringify(body, null, 2));
+  }
+}
+
+function logResponse(operation: string, status: number, statusText: string, headers?: any, body?: any): void {
+  logSection(`${operation} - RESPONSE`);
+  console.log(`Status: ${status} ${statusText}`);
+  if (headers) {
+    console.log(`\nResponse Headers:`);
+    const headerObj = typeof headers.entries === "function" 
+      ? Object.fromEntries(headers.entries())
+      : headers;
+    for (const [key, value] of Object.entries(headerObj)) {
+      console.log(`  ${key}: ${value}`);
+    }
+  }
+  if (body) {
+    console.log(`\nResponse Body:`);
+    console.log(typeof body === "string" ? body : JSON.stringify(body, null, 2));
+  }
+  console.log("-".repeat(80));
+}
+
 function getX5tFromCert(certPath: string): string | null {
   try {
     const certPem = fs.readFileSync(path.resolve(certPath), "utf8");
@@ -357,6 +405,14 @@ export async function registerRoutes(
       const queryUrl = buildQueryUrl(params);
       const startTime = Date.now();
 
+      const requestHeaders = {
+        "Authorization": `Bearer ${params.jwtToken}`,
+        "Accept": "application/fhir+json",
+        "Content-Type": "application/fhir+json",
+      };
+      
+      logRequest("DocumentReference Query", "GET", queryUrl, requestHeaders);
+
       try {
         const httpsAgent = getHttpsAgent();
         
@@ -432,6 +488,9 @@ export async function registerRoutes(
           const text = await response.text();
           data = { rawResponse: text, contentType };
         }
+
+        logResponse("DocumentReference Query", response.status, response.statusText || "OK", response.headers, data);
+        console.log(`Response Time: ${responseTime}ms`);
 
         await storage.addQueryHistory({
           queryUrl,
@@ -530,6 +589,13 @@ export async function registerRoutes(
         });
       }
 
+      const binaryRequestHeaders = {
+        "Authorization": `Bearer ${jwtToken}`,
+        "Accept": "application/fhir+json",
+      };
+      
+      logRequest("Binary Retrieve", "GET", documentUrl, binaryRequestHeaders);
+      
       const httpsAgent = getHttpsAgent();
       
       const fetchBinary = (): Promise<{ status: number; statusText: string; data: string; headers: any }> => {
@@ -540,10 +606,7 @@ export async function registerRoutes(
             port: urlObj.port || 443,
             path: urlObj.pathname + urlObj.search,
             method: "GET",
-            headers: {
-              "Authorization": `Bearer ${jwtToken}`,
-              "Accept": "application/fhir+json",
-            },
+            headers: binaryRequestHeaders,
             agent: httpsAgent,
             timeout: 55000,
           };
@@ -573,29 +636,24 @@ export async function registerRoutes(
       };
 
       const response = await fetchBinary();
+      
+      let parsedResponseBody;
+      try {
+        parsedResponseBody = JSON.parse(response.data);
+      } catch {
+        parsedResponseBody = response.data;
+      }
+      
+      logResponse("Binary Retrieve", response.status, response.statusText, response.headers, parsedResponseBody);
 
       if (response.status !== 200) {
-        let errorDetails;
-        try {
-          errorDetails = JSON.parse(response.data);
-        } catch {
-          errorDetails = response.data;
-        }
         return res.status(response.status).json({
           error: `CommonWell API Error: ${response.status} ${response.statusText}`,
-          details: errorDetails,
+          details: parsedResponseBody,
         });
       }
 
-      let binaryResource;
-      try {
-        binaryResource = JSON.parse(response.data);
-      } catch {
-        return res.status(502).json({
-          error: "Invalid response from CommonWell API",
-          message: "Failed to parse Binary resource",
-        });
-      }
+      const binaryResource = parsedResponseBody;
 
       if (binaryResource.resourceType !== "Binary") {
         return res.status(502).json({
@@ -635,13 +693,24 @@ export async function registerRoutes(
       }
 
       const { clearIdToken } = parseResult.data;
+      
+      logSection("JWT Generation");
+      console.log("CLEAR ID Token (first 100 chars):", clearIdToken.substring(0, 100) + "...");
+      
       const result = generateCommonWellJwt(clearIdToken);
 
       if ("error" in result) {
+        console.log("JWT Generation FAILED:", result.error);
         return res.status(400).json({
           error: result.error,
         });
       }
+
+      console.log("JWT Generation SUCCESS");
+      console.log("Generated JWT (first 100 chars):", result.jwt.substring(0, 100) + "...");
+      console.log("CLEAR Token Claims:");
+      console.log(JSON.stringify(result.claims, null, 2));
+      console.log("-".repeat(80));
 
       return res.json({
         success: true,
@@ -688,28 +757,29 @@ export async function registerRoutes(
 
       const baseUrl = API_BASE_URLS[environment];
       const patientUrl = `${baseUrl}org/${CW_ORG_OID}/Patient`;
+      const body = JSON.stringify(patientObject);
 
-      console.log("[Patient Create] URL:", patientUrl);
-      console.log("[Patient Create] Request body:", JSON.stringify(patientObject, null, 2));
+      const patientRequestHeaders = {
+        "Authorization": `Bearer ${jwtResult.jwt}`,
+        "Accept": "application/fhir+json",
+        "Content-Type": "application/fhir+json",
+        "Content-Length": Buffer.byteLength(body).toString(),
+      };
+
+      logRequest("Patient Create", "POST", patientUrl, patientRequestHeaders, patientObject);
 
       const httpsAgent = getHttpsAgent();
       
       const createPatient = (): Promise<{ status: number; statusText: string; data: string }> => {
         return new Promise((resolve, reject) => {
           const urlObj = new URL(patientUrl);
-          const body = JSON.stringify(patientObject);
           
           const reqOptions: https.RequestOptions = {
             hostname: urlObj.hostname,
             port: urlObj.port || 443,
             path: urlObj.pathname,
             method: "POST",
-            headers: {
-              "Authorization": `Bearer ${jwtResult.jwt}`,
-              "Accept": "application/fhir+json",
-              "Content-Type": "application/fhir+json",
-              "Content-Length": Buffer.byteLength(body),
-            },
+            headers: patientRequestHeaders,
             agent: httpsAgent,
             timeout: 55000,
           };
@@ -740,15 +810,14 @@ export async function registerRoutes(
 
       const response = await createPatient();
 
-      console.log("[Patient Create] Response status:", response.status, response.statusText);
-      console.log("[Patient Create] Response body:", response.data);
-
       let responseData;
       try {
         responseData = JSON.parse(response.data);
       } catch {
         responseData = { rawResponse: response.data };
       }
+
+      logResponse("Patient Create", response.status, response.statusText, null, responseData);
 
       if (response.status >= 200 && response.status < 300) {
         return res.json({

@@ -13,6 +13,41 @@ from dateutil import parser as date_parser
 from typing import Optional, Dict, Any, List
 from urllib.parse import urlencode, quote
 
+def format_timestamp():
+    return datetime.now().isoformat()
+
+def log_section(title):
+    print(f"\n{'='*80}")
+    print(f"[{format_timestamp()}] {title}")
+    print("="*80)
+
+def log_request(operation, method, url, headers, body=None):
+    log_section(f"{operation} - REQUEST")
+    print(f"Method: {method}")
+    print(f"URL: {url}")
+    print(f"\nHeaders:")
+    for key, value in headers.items():
+        if key.lower() == "authorization":
+            token_preview = value[:50] + "..." if len(value) > 50 else value
+            print(f"  {key}: {token_preview}")
+        else:
+            print(f"  {key}: {value}")
+    if body:
+        print(f"\nRequest Body:")
+        print(json.dumps(body, indent=2) if isinstance(body, dict) else body)
+
+def log_response(operation, status_code, status_text, headers=None, body=None):
+    log_section(f"{operation} - RESPONSE")
+    print(f"Status: {status_code} {status_text}")
+    if headers:
+        print(f"\nResponse Headers:")
+        for key, value in headers.items():
+            print(f"  {key}: {value}")
+    if body:
+        print(f"\nResponse Body:")
+        print(json.dumps(body, indent=2) if isinstance(body, dict) else body)
+    print("-"*80)
+
 try:
     import jwt as pyjwt
     from cryptography import x509
@@ -307,9 +342,6 @@ def create_patient(environment: str, cw_jwt: str, patient_object: Dict[str, Any]
     base_url = PATIENT_API_BASE_URLS[environment]
     patient_url = f"{base_url}org/{CW_ORG_OID}/Patient"
     
-    print(f"[Patient Create] URL: {patient_url}")
-    print(f"[Patient Create] Request body: {json.dumps(patient_object, indent=2)}")
-    
     cert, verify = get_ssl_context(skip_verify)
     
     headers = {
@@ -317,6 +349,8 @@ def create_patient(environment: str, cw_jwt: str, patient_object: Dict[str, Any]
         "Accept": "application/fhir+json",
         "Content-Type": "application/fhir+json"
     }
+    
+    log_request("Patient Create", "POST", patient_url, headers, patient_object)
     
     try:
         response = requests.post(
@@ -328,13 +362,17 @@ def create_patient(environment: str, cw_jwt: str, patient_object: Dict[str, Any]
             timeout=55
         )
         
-        print(f"[Patient Create] Response status: {response.status_code}")
-        print(f"[Patient Create] Response body: {response.text}")
+        try:
+            response_data = response.json() if response.text else {}
+        except:
+            response_data = {"raw": response.text}
+        
+        log_response("Patient Create", response.status_code, response.reason, dict(response.headers), response_data)
         
         if response.status_code >= 200 and response.status_code < 300:
             return {
                 "success": True,
-                "patient": response.json() if response.text else {},
+                "patient": response_data,
                 "patient_object": patient_object
             }
         else:
@@ -477,6 +515,8 @@ def execute_query(params: Dict[str, Any]) -> Dict[str, Any]:
         "Content-Type": "application/fhir+json"
     }
     
+    log_request("DocumentReference Query", "GET", url, headers)
+    
     try:
         start_time = datetime.now()
         response = requests.get(
@@ -489,10 +529,18 @@ def execute_query(params: Dict[str, Any]) -> Dict[str, Any]:
         end_time = datetime.now()
         response_time = (end_time - start_time).total_seconds() * 1000
         
+        try:
+            response_data = response.json()
+        except:
+            response_data = {"raw": response.text}
+        
+        log_response("DocumentReference Query", response.status_code, response.reason, dict(response.headers), response_data)
+        print(f"Response Time: {response_time:.0f}ms")
+        
         if response.status_code == 200:
             return {
                 "success": True,
-                "data": response.json(),
+                "data": response_data,
                 "response_time": response_time
             }
         else:
@@ -528,6 +576,8 @@ def download_document(environment: str, jwt_token: str, document_url: str, skip_
         "Accept": "application/fhir+json"
     }
     
+    log_request("Binary Retrieve", "GET", document_url, headers)
+    
     try:
         response = requests.get(
             document_url,
@@ -537,8 +587,15 @@ def download_document(environment: str, jwt_token: str, document_url: str, skip_
             timeout=55
         )
         
+        try:
+            response_data = response.json()
+        except:
+            response_data = {"raw": response.text}
+        
+        log_response("Binary Retrieve", response.status_code, response.reason, dict(response.headers), response_data)
+        
         if response.status_code == 200:
-            data = response.json()
+            data = response_data
             return {
                 "success": True,
                 "content_type": data.get("contentType", "application/octet-stream"),
