@@ -19,48 +19,59 @@ function formatTimestamp(): string {
   return new Date().toISOString();
 }
 
-function logSection(title: string): void {
-  console.log(`\n${"=".repeat(80)}`);
-  console.log(`[${formatTimestamp()}] ${title}`);
-  console.log("=".repeat(80));
+function logJson(logEntry: Record<string, any>): void {
+  console.log(JSON.stringify(logEntry));
 }
 
 function logRequest(operation: string, method: string, url: string, headers: Record<string, string>, body?: any): void {
-  logSection(`${operation} - REQUEST`);
-  console.log(`Method: ${method}`);
-  console.log(`URL: ${url}`);
-  console.log(`\nHeaders:`);
+  const sanitizedHeaders: Record<string, string> = {};
   for (const [key, value] of Object.entries(headers)) {
     if (key.toLowerCase() === "authorization") {
-      const tokenPreview = value.length > 50 ? `${value.substring(0, 50)}...` : value;
-      console.log(`  ${key}: ${tokenPreview}`);
+      sanitizedHeaders[key] = value.length > 100 ? `${value.substring(0, 100)}...[truncated]` : value;
     } else {
-      console.log(`  ${key}: ${value}`);
+      sanitizedHeaders[key] = value;
     }
   }
-  if (body) {
-    console.log(`\nRequest Body:`);
-    console.log(typeof body === "string" ? body : JSON.stringify(body, null, 2));
-  }
+
+  logJson({
+    timestamp: formatTimestamp(),
+    severity: "INFO",
+    type: "REQUEST",
+    operation,
+    method,
+    url,
+    headers: sanitizedHeaders,
+    body: body || null
+  });
 }
 
-function logResponse(operation: string, status: number, statusText: string, headers?: any, body?: any): void {
-  logSection(`${operation} - RESPONSE`);
-  console.log(`Status: ${status} ${statusText}`);
-  if (headers) {
-    console.log(`\nResponse Headers:`);
-    const headerObj = typeof headers.entries === "function" 
-      ? Object.fromEntries(headers.entries())
-      : headers;
-    for (const [key, value] of Object.entries(headerObj)) {
-      console.log(`  ${key}: ${value}`);
-    }
-  }
-  if (body) {
-    console.log(`\nResponse Body:`);
-    console.log(typeof body === "string" ? body : JSON.stringify(body, null, 2));
-  }
-  console.log("-".repeat(80));
+function logResponse(operation: string, status: number, statusText: string, headers?: any, body?: any, responseTimeMs?: number): void {
+  const headerObj = headers 
+    ? (typeof headers.entries === "function" ? Object.fromEntries(headers.entries()) : headers)
+    : null;
+
+  logJson({
+    timestamp: formatTimestamp(),
+    severity: status >= 400 ? "ERROR" : "INFO",
+    type: "RESPONSE",
+    operation,
+    statusCode: status,
+    statusText,
+    headers: headerObj,
+    body: body || null,
+    responseTimeMs: responseTimeMs || null
+  });
+}
+
+function logEvent(operation: string, message: string, data?: Record<string, any>, severity: string = "INFO"): void {
+  logJson({
+    timestamp: formatTimestamp(),
+    severity,
+    type: "EVENT",
+    operation,
+    message,
+    ...data
+  });
 }
 
 function getX5tFromCert(certPath: string): string | null {
@@ -489,8 +500,7 @@ export async function registerRoutes(
           data = { rawResponse: text, contentType };
         }
 
-        logResponse("DocumentReference Query", response.status, response.statusText || "OK", response.headers, data);
-        console.log(`Response Time: ${responseTime}ms`);
+        logResponse("DocumentReference Query", response.status, response.statusText || "OK", response.headers, data, responseTime);
 
         await storage.addQueryHistory({
           queryUrl,
@@ -694,23 +704,23 @@ export async function registerRoutes(
 
       const { clearIdToken } = parseResult.data;
       
-      logSection("JWT Generation");
-      console.log("CLEAR ID Token (first 100 chars):", clearIdToken.substring(0, 100) + "...");
+      logEvent("JWT Generation", "Starting JWT generation", {
+        clearIdTokenPreview: clearIdToken.substring(0, 100) + "...[truncated]"
+      });
       
       const result = generateCommonWellJwt(clearIdToken);
 
       if ("error" in result) {
-        console.log("JWT Generation FAILED:", result.error);
+        logEvent("JWT Generation", "JWT generation failed", { error: result.error }, "ERROR");
         return res.status(400).json({
           error: result.error,
         });
       }
 
-      console.log("JWT Generation SUCCESS");
-      console.log("Generated JWT (first 100 chars):", result.jwt.substring(0, 100) + "...");
-      console.log("CLEAR Token Claims:");
-      console.log(JSON.stringify(result.claims, null, 2));
-      console.log("-".repeat(80));
+      logEvent("JWT Generation", "JWT generation successful", {
+        jwtPreview: result.jwt.substring(0, 100) + "...[truncated]",
+        clearTokenClaims: result.claims
+      });
 
       return res.json({
         success: true,

@@ -16,37 +16,52 @@ from urllib.parse import urlencode, quote
 def format_timestamp():
     return datetime.now().isoformat()
 
-def log_section(title):
-    print(f"\n{'='*80}")
-    print(f"[{format_timestamp()}] {title}")
-    print("="*80)
+def log_json(log_entry):
+    print(json.dumps(log_entry))
 
 def log_request(operation, method, url, headers, body=None):
-    log_section(f"{operation} - REQUEST")
-    print(f"Method: {method}")
-    print(f"URL: {url}")
-    print(f"\nHeaders:")
+    sanitized_headers = {}
     for key, value in headers.items():
         if key.lower() == "authorization":
-            token_preview = value[:50] + "..." if len(value) > 50 else value
-            print(f"  {key}: {token_preview}")
+            sanitized_headers[key] = value[:100] + "...[truncated]" if len(value) > 100 else value
         else:
-            print(f"  {key}: {value}")
-    if body:
-        print(f"\nRequest Body:")
-        print(json.dumps(body, indent=2) if isinstance(body, dict) else body)
+            sanitized_headers[key] = value
+    
+    log_json({
+        "timestamp": format_timestamp(),
+        "severity": "INFO",
+        "type": "REQUEST",
+        "operation": operation,
+        "method": method,
+        "url": url,
+        "headers": sanitized_headers,
+        "body": body
+    })
 
-def log_response(operation, status_code, status_text, headers=None, body=None):
-    log_section(f"{operation} - RESPONSE")
-    print(f"Status: {status_code} {status_text}")
-    if headers:
-        print(f"\nResponse Headers:")
-        for key, value in headers.items():
-            print(f"  {key}: {value}")
-    if body:
-        print(f"\nResponse Body:")
-        print(json.dumps(body, indent=2) if isinstance(body, dict) else body)
-    print("-"*80)
+def log_response(operation, status_code, status_text, headers=None, body=None, response_time_ms=None):
+    log_json({
+        "timestamp": format_timestamp(),
+        "severity": "ERROR" if status_code >= 400 else "INFO",
+        "type": "RESPONSE",
+        "operation": operation,
+        "statusCode": status_code,
+        "statusText": status_text,
+        "headers": dict(headers) if headers else None,
+        "body": body,
+        "responseTimeMs": response_time_ms
+    })
+
+def log_event(operation, message, data=None, severity="INFO"):
+    log_entry = {
+        "timestamp": format_timestamp(),
+        "severity": severity,
+        "type": "EVENT",
+        "operation": operation,
+        "message": message
+    }
+    if data:
+        log_entry.update(data)
+    log_json(log_entry)
 
 try:
     import jwt as pyjwt
@@ -534,8 +549,7 @@ def execute_query(params: Dict[str, Any]) -> Dict[str, Any]:
         except:
             response_data = {"raw": response.text}
         
-        log_response("DocumentReference Query", response.status_code, response.reason, dict(response.headers), response_data)
-        print(f"Response Time: {response_time:.0f}ms")
+        log_response("DocumentReference Query", response.status_code, response.reason, dict(response.headers), response_data, response_time)
         
         if response.status_code == 200:
             return {
