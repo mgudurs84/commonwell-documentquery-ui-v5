@@ -8,7 +8,7 @@ This is an internal testing tool for querying the CommonWell Health Alliance FHI
 - **Node.js** 18.x or higher (20.x recommended)
 - **npm** 9.x or higher
 - A valid **CLEAR ID Token** (from Accounts Team /token API) - the tool generates the CommonWell JWT automatically
-- **Client Certificate** (.pem/.crt) and **Private Key** (.key) for mTLS authentication AND JWT signing
+- **Client Certificate** and **Private Key** in the `certs/` folder
 
 ## Quick Start (Windows)
 
@@ -36,52 +36,34 @@ The project uses `cross-env` for cross-platform environment variables. Update yo
 
 ### 4. Configure Client Certificates (Required for Integration API)
 
-CommonWell's Integration environment requires **mutual TLS (mTLS)**. You must provide your client certificate files.
+CommonWell's Integration environment requires **mutual TLS (mTLS)**. Place your certificate files in the `certs/` folder:
 
-Create a `.env` file in the project root (or set environment variables) with paths to your certificate files:
-
-**Windows (PowerShell):**
-```powershell
-$env:CLIENT_CERT_PATH = "C:\path\to\your\client-cert.pem"
-$env:CLIENT_KEY_PATH = "C:\path\to\your\client-key.pem"
-$env:CA_CERT_PATH = "C:\path\to\your\ca-cert.pem"  # Optional
-npm run dev
+```
+certs/
+├── client-cert.pem    # Client certificate for mTLS
+├── client-key.pem     # Private key for mTLS and JWT signing
+└── ca-cert.pem        # CA certificate (optional)
 ```
 
-**Windows (Command Prompt):**
-```cmd
-set CLIENT_CERT_PATH=C:\path\to\your\client-cert.pem
-set CLIENT_KEY_PATH=C:\path\to\your\client-key.pem
-set CA_CERT_PATH=C:\path\to\your\ca-cert.pem
-npm run dev
+### Configuration
+
+All settings are hardcoded in `server/config.ts` for demo purposes:
+
+```typescript
+export const config = {
+  CW_ORG_OID: "2.16.840.1.113883.3.5958.1000.300",
+  CW_ORG_NAME: "CVS Health",
+  CLEAR_OID: "2.16.840.1.113883.3.5958.1000.300.1",
+  CLIENT_CERT_PATH: "./certs/client-cert.pem",
+  CLIENT_KEY_PATH: "./certs/client-key.pem",
+  CA_CERT_PATH: "./certs/ca-cert.pem",
+  SKIP_TLS_VERIFY: false,
+};
 ```
 
-**Or create a batch file (run-local.bat):**
-```batch
-@echo off
-set CLIENT_CERT_PATH=C:\certs\client-cert.pem
-set CLIENT_KEY_PATH=C:\certs\client-key.pem
-set CA_CERT_PATH=C:\certs\ca-cert.pem
-set CW_ORG_OID=2.16.840.1.113883.3.CVS
-set CW_ORG_NAME=CVS Health
-set CLEAR_OID=1.2.3.4.5.6.7.8.9
-set SKIP_TLS_VERIFY=true
-npm run dev
-```
+To modify settings, edit `server/config.ts` directly.
 
-### Environment Variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CLIENT_CERT_PATH` | Yes | Path to client certificate for mTLS and JWT signing |
-| `CLIENT_KEY_PATH` | Yes | Path to private key for mTLS and JWT signing |
-| `CA_CERT_PATH` | No | Path to CA certificate for server verification |
-| `CW_ORG_OID` | No | Your organization OID (default: 2.16.840.1.113883.3.CVS) |
-| `CW_ORG_NAME` | No | Your organization name (default: CVS Health) |
-| `CLEAR_OID` | No | CLEAR assigning authority OID (default: 1.2.3.4.5.6.7.8.9) |
-| `SKIP_TLS_VERIFY` | No | Set to "true" to skip TLS verification (testing only) |
-
-**Note:** A pre-configured `run-local.bat` is included - just update the certificate paths and run it.
+**Note:** A pre-configured `run-local.bat` is included for Windows users.
 
 ### 5. Start the Development Server
 ```bash

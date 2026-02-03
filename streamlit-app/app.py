@@ -103,19 +103,13 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-API_BASE_URLS = {
-    "integration": "https://api.integration.commonwellalliance.lkopera.com/v2/R4/",
-    "production": "https://api.commonwellalliance.lkopera.com/v2/R4/"
-}
-
-PATIENT_API_BASE_URLS = {
-    "integration": "https://api.integration.commonwellalliance.lkopera.com/v2/",
-    "production": "https://api.commonwellalliance.lkopera.com/v2/"
-}
-
-CW_ORG_OID = os.environ.get("CW_ORG_OID", "2.16.840.1.113883.3.5958.1000.300")
-CW_ORG_NAME = os.environ.get("CW_ORG_NAME", "CVS Health")
-CLEAR_OID = os.environ.get("CLEAR_OID", "2.16.840.1.113883.3.5958.1000.300.1")
+from config import (
+    CW_ORG_OID, CW_ORG_NAME, CLEAR_OID,
+    CLIENT_CERT_PATH, CLIENT_KEY_PATH, CA_CERT_PATH,
+    CERTIFICATE_PATH, PRIVATE_KEY_PATH,
+    API_BASE_URLS, PATIENT_API_BASE_URLS,
+    API_TIMEOUT, SKIP_TLS_VERIFY
+)
 
 def decode_clear_id_token(token: str) -> Optional[Dict[str, Any]]:
     try:
@@ -144,20 +138,11 @@ def generate_commonwell_jwt(clear_id_token: str) -> Dict[str, Any]:
     if not JWT_AVAILABLE:
         return {"error": "PyJWT and cryptography packages required. Install with: pip install PyJWT cryptography"}
     
-    certs_dir = os.path.join(os.path.dirname(__file__), "certs")
-    cert_path = os.path.join(certs_dir, "certificate.pem")
-    key_path = os.path.join(certs_dir, "private_key.pem")
-    
-    if not os.path.exists(cert_path):
-        cert_path = os.environ.get("CW_CERTIFICATE_PATH")
-    if not os.path.exists(key_path):
-        key_path = os.environ.get("CW_PRIVATE_KEY_PATH")
-    
-    if not cert_path or not key_path:
-        return {"error": "Certificate paths not configured. Set CW_CERTIFICATE_PATH and CW_PRIVATE_KEY_PATH."}
+    cert_path = CERTIFICATE_PATH
+    key_path = PRIVATE_KEY_PATH
     
     if not os.path.exists(cert_path) or not os.path.exists(key_path):
-        return {"error": f"Certificate files not found at {cert_path} or {key_path}"}
+        return {"error": f"Certificate files not found. Ensure certificate.pem and private_key.pem exist in certs/ folder."}
     
     try:
         with open(key_path, "rb") as f:
@@ -461,17 +446,9 @@ def build_query_url(params: Dict[str, Any]) -> str:
     return url + "&".join(query_params)
 
 def get_ssl_context(skip_verify: bool = False):
-    certs_dir = os.path.join(os.path.dirname(__file__), "certs")
-    cert_path = os.path.join(certs_dir, "client.crt")
-    key_path = os.path.join(certs_dir, "client.key")
-    ca_path = os.path.join(certs_dir, "ca.crt")
-    
-    if not os.path.exists(cert_path):
-        cert_path = os.environ.get("CLIENT_CERT_PATH")
-    if not os.path.exists(key_path):
-        key_path = os.environ.get("CLIENT_KEY_PATH")
-    if not os.path.exists(ca_path):
-        ca_path = os.environ.get("CA_CERT_PATH")
+    cert_path = CLIENT_CERT_PATH
+    key_path = CLIENT_KEY_PATH
+    ca_path = CA_CERT_PATH
     
     cert = None
     verify = True
@@ -479,7 +456,7 @@ def get_ssl_context(skip_verify: bool = False):
     if cert_path and key_path and os.path.exists(cert_path) and os.path.exists(key_path):
         cert = (cert_path, key_path)
     
-    if skip_verify:
+    if skip_verify or SKIP_TLS_VERIFY:
         verify = False
         urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
     elif ca_path and os.path.exists(ca_path):

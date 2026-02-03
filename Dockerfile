@@ -35,8 +35,11 @@ RUN npm ci --omit=dev
 # Copy built files from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Create certs directory for mTLS certificates (mounted via GCP Secret Manager)
-RUN mkdir -p /app/certs
+# Copy config file
+COPY --from=builder /app/server/config.ts ./server/config.ts
+
+# Copy certs directory (certificates should be placed here before build or mounted at runtime)
+COPY certs/ ./certs/
 
 # Set environment variables
 ENV NODE_ENV=production

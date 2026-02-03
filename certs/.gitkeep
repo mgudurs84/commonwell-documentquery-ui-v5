@@ -1,0 +1,11 @@
+# Place your mTLS and JWT signing certificates in this folder:
+#
+# Required files:
+# - client-cert.pem  (Client certificate for mTLS)
+# - client-key.pem   (Client private key for mTLS and JWT signing)
+#
+# Optional:
+# - ca-cert.pem      (CA certificate for server verification)
+#
+# Note: These files should NOT be committed to version control.
+# For demo purposes, certificates are expected in this folder.

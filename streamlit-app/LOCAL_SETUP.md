@@ -37,68 +37,41 @@ pip install -r requirements.txt
 
 ## Certificate Configuration
 
-### Option 1: Place Certificates in the `certs/` Folder
-
-Create the following files in the `streamlit-app/certs/` folder:
+Place your certificate files in the `certs/` folder:
 
 ```
 streamlit-app/
 ├── certs/
-│   ├── client.crt       # Client certificate for mTLS (PEM format)
-│   ├── client.key       # Client private key for mTLS (PEM format)
-│   ├── ca.crt           # CA certificate (optional, PEM format)
-│   ├── certificate.pem  # X.509 certificate for JWT x5t header
-│   └── private_key.pem  # RSA private key for JWT signing (RS384)
+│   ├── client-cert.pem   # Client certificate for mTLS
+│   ├── client-key.pem    # Client private key for mTLS
+│   ├── ca-cert.pem       # CA certificate (optional)
+│   ├── certificate.pem   # X.509 certificate for JWT x5t header
+│   └── private_key.pem   # RSA private key for JWT signing
 ├── app.py
+├── config.py
 └── requirements.txt
 ```
 
 **Note:** In non-production environments, the same certificate/key pair is typically used for both mTLS and JWT signing.
 
-### Option 2: Use Environment Variables
+### Configuration
 
-Set the following environment variables:
+All settings are hardcoded in `config.py` for demo purposes:
 
-```bash
-# Windows - mTLS Configuration
-set CLIENT_CERT_PATH=C:\path\to\client.crt
-set CLIENT_KEY_PATH=C:\path\to\client.key
-set CA_CERT_PATH=C:\path\to\ca.crt
+```python
+CW_ORG_OID = "2.16.840.1.113883.3.5958.1000.300"
+CW_ORG_NAME = "CVS Health"
+CLEAR_OID = "2.16.840.1.113883.3.5958.1000.300.1"
 
-# Windows - JWT Signing Configuration
-set CW_CERTIFICATE_PATH=C:\path\to\certificate.pem
-set CW_PRIVATE_KEY_PATH=C:\path\to\private_key.pem
+CLIENT_CERT_PATH = "./certs/client-cert.pem"
+CLIENT_KEY_PATH = "./certs/client-key.pem"
+CERTIFICATE_PATH = "./certs/certificate.pem"
+PRIVATE_KEY_PATH = "./certs/private_key.pem"
 
-# Windows - Organization Configuration
-set CW_ORG_OID=2.16.840.1.113883.3.CVS
-set CW_ORG_NAME=CVS Health
-set CLEAR_OID=1.2.3.4.5.6.7.8.9
-
-# macOS/Linux
-export CLIENT_CERT_PATH=/path/to/client.crt
-export CLIENT_KEY_PATH=/path/to/client.key
-export CA_CERT_PATH=/path/to/ca.crt
-export CW_CERTIFICATE_PATH=/path/to/certificate.pem
-export CW_PRIVATE_KEY_PATH=/path/to/private_key.pem
-export CW_ORG_OID=2.16.840.1.113883.3.CVS
-export CW_ORG_NAME="CVS Health"
-export CLEAR_OID=1.2.3.4.5.6.7.8.9
+SKIP_TLS_VERIFY = False
 ```
 
-### Environment Variables Reference
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `CLIENT_CERT_PATH` | Yes* | Path to client certificate for mTLS |
-| `CLIENT_KEY_PATH` | Yes* | Path to client private key for mTLS |
-| `CA_CERT_PATH` | No | Path to CA certificate for server verification |
-| `CW_CERTIFICATE_PATH` | Yes* | Path to X.509 certificate for JWT x5t header |
-| `CW_PRIVATE_KEY_PATH` | Yes* | Path to RSA private key for JWT signing |
-| `CW_ORG_OID` | No | Your organization OID (default: 2.16.840.1.113883.3.CVS) |
-| `CW_ORG_NAME` | No | Your organization name (default: CVS Health) |
-| `CLEAR_OID` | No | CLEAR assigning authority OID (default: 1.2.3.4.5.6.7.8.9) |
-
-*Or place files in the `certs/` folder with the expected filenames.
+To modify settings, edit `config.py` directly.
 
 ## Running the Application
 

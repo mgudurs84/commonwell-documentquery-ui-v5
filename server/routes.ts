@@ -9,10 +9,11 @@ import { v4 as uuidv4 } from "uuid";
 import { storage } from "./storage";
 import { BASE_URLS, API_BASE_URLS, type QueryParameters, insertQueryHistorySchema } from "@shared/schema";
 import { z } from "zod";
+import { config } from "./config";
 
-const CW_ORG_OID = process.env.CW_ORG_OID || "2.16.840.1.113883.3.5958.1000.300";
-const CW_ORG_NAME = process.env.CW_ORG_NAME || "CVS Health";
-const CLEAR_OID = process.env.CLEAR_OID || "2.16.840.1.113883.3.5958.1000.300.1";
+const CW_ORG_OID = config.CW_ORG_OID;
+const CW_ORG_NAME = config.CW_ORG_NAME;
+const CLEAR_OID = config.CLEAR_OID;
 
 function getX5tFromCert(certPath: string): string | null {
   try {
@@ -44,10 +45,10 @@ function decodeIdToken(idToken: string): any {
 }
 
 function generateCommonWellJwt(clearIdToken: string): { jwt: string; claims: any } | { error: string } {
-  const certPath = process.env.CLIENT_CERT_PATH;
-  const keyPath = process.env.CLIENT_KEY_PATH;
+  const certPath = config.CLIENT_CERT_PATH;
+  const keyPath = config.CLIENT_KEY_PATH;
 
-  if (!certPath || !keyPath) {
+  if (!certPath || !keyPath || !fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
     return { error: "Certificate paths not configured. Set CLIENT_CERT_PATH and CLIENT_KEY_PATH." };
   }
 
@@ -219,13 +220,13 @@ function buildPatientObject(clearClaims: any, cvsPatientId: string, cvsAaid: str
 }
 
 function getHttpsAgent(): https.Agent | undefined {
-  const certPath = process.env.CLIENT_CERT_PATH;
-  const keyPath = process.env.CLIENT_KEY_PATH;
-  const caPath = process.env.CA_CERT_PATH;
-  const skipTlsVerify = process.env.SKIP_TLS_VERIFY === "true";
+  const certPath = config.CLIENT_CERT_PATH;
+  const keyPath = config.CLIENT_KEY_PATH;
+  const caPath = config.CA_CERT_PATH;
+  const skipTlsVerify = config.SKIP_TLS_VERIFY;
 
-  if (!certPath || !keyPath) {
-    console.warn("Client certificate not configured. Set CLIENT_CERT_PATH and CLIENT_KEY_PATH environment variables for mTLS.");
+  if (!certPath || !keyPath || !fs.existsSync(certPath) || !fs.existsSync(keyPath)) {
+    console.warn("Client certificate not found in certs/ folder. Ensure client-cert.pem and client-key.pem exist.");
     return undefined;
   }
 
@@ -236,7 +237,7 @@ function getHttpsAgent(): https.Agent | undefined {
       rejectUnauthorized: !skipTlsVerify,
     };
 
-    if (caPath) {
+    if (caPath && fs.existsSync(caPath)) {
       agentOptions.ca = fs.readFileSync(path.resolve(caPath));
     }
 
