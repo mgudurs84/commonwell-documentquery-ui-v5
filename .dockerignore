@@ -1,0 +1,40 @@
+# Dependencies
+node_modules
+npm-debug.log
+
+# Development files
+.git
+.gitignore
+*.md
+!LOCAL_SETUP.md
+
+# Streamlit app (separate deployment)
+streamlit-app
+
+# Environment files (use GCP Secret Manager)
+.env
+.env.*
+
+# Build artifacts
+dist
+
+# IDE
+.vscode
+.idea
+*.swp
+*.swo
+
+# Test files
+*.test.ts
+*.spec.ts
+__tests__
+
+# Temporary files
+tmp
+temp
+*.tmp
+
+# Certificates (mount at runtime via GCP Secret Manager)
+certs/*.pem
+certs/*.crt
+certs/*.key
